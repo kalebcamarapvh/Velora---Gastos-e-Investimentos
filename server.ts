@@ -32,7 +32,11 @@ const REFRESH_SECRET = process.env.API_SECRET_TOKEN || 'fallback-secret-123'; //
 app.use('/api/', rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 1000, // Increased to 1000 to prevent locking out legitimate rapid tab switching
-  message: { error: 'Muitas requisições. Tente novamente mais tarde.' }
+  message: { error: 'Muitas requisições. Tente novamente mais tarde.' },
+  handler: (req, res, next, options) => {
+    console.warn(`[RATE LIMIT GLOBAL] IP Bloqueado temporariamente: ${req.ip} - Rota: ${req.originalUrl}`);
+    res.status(options.statusCode).send(options.message);
+  }
 }));
 
 // --- BEARER TOKEN AUTH (VPN PROTECTION) DEPRECATED IN V2 ---
@@ -210,7 +214,11 @@ const authSchema = z.object({
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 5,
-  message: { error: 'Muitas tentativas de login. Sua conta foi temporariamente bloqueada. Tente novamente em 15 minutos.' }
+  message: { error: 'Muitas tentativas de login. Sua conta foi temporariamente bloqueada. Tente novamente em 15 minutos.' },
+  handler: (req, res, next, options) => {
+    console.warn(`[RATE LIMIT LOGIN] ALERTA DE SEGURANÇA: IP Bloqueado por Força Bruta: ${req.ip} - Tentativas excedidas no /api/login`);
+    res.status(options.statusCode).send(options.message);
+  }
 });
 
 app.post('/api/register', async (req, res) => {
