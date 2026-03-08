@@ -22,6 +22,7 @@ import { Assinaturas } from './components/tabs/Assinaturas';
 import { Dividas } from './components/tabs/Dividas';
 import { Configuracoes } from './components/tabs/Configuracoes';
 import { Auth } from './components/Auth';
+import { Admin } from './components/tabs/Admin';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState(() => {
@@ -68,6 +69,7 @@ export default function App() {
       case 'assinaturas': return <Assinaturas />;
       case 'dividas': return <Dividas />;
       case 'configuracoes': return <Configuracoes />;
+      case 'admin': return <Admin />;
       default: return <Dashboard />;
     }
   };
@@ -89,4 +91,6 @@ export default function App() {
       </PrivacyProvider>
     </ThemeProvider>
   );
+
 }
+

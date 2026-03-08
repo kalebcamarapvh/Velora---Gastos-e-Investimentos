@@ -11,6 +11,17 @@ import cookieParser from 'cookie-parser';
 import { z } from 'zod';
 import crypto from 'crypto';
 
+interface LogEntry {
+  ip: string;
+  method: string;
+  route: string;
+  status: number;
+  timestamp: string;
+}
+
+const requestLogs: LogEntry[] = [];
+const MAX_LOGS = 5000;
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 app.set('trust proxy', 1); // Crucial for Vite proxy/nginx so req.ip is correct and rate limiter doesn't block everyone
@@ -25,6 +36,28 @@ app.use(express.static(path.join(__dirname, 'dist')));
 
 app.use(express.json());
 app.use(cookieParser());
+
+app.use((req, res, next) => {
+  const ip =
+    (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ||
+    req.socket.remoteAddress ||
+    'unknown';
+
+  res.on('finish', () => {
+    requestLogs.push({
+      ip,
+      method: req.method,
+      route: req.path,
+      status: res.statusCode,
+      timestamp: new Date().toISOString(),
+    });
+    if (requestLogs.length > MAX_LOGS) {
+      requestLogs.splice(0, requestLogs.length - MAX_LOGS);
+    }
+  });
+
+  next();
+});
 
 const JWT_SECRET = process.env.API_SECRET_TOKEN || 'fallback-secret-123';
 const REFRESH_SECRET = process.env.API_SECRET_TOKEN || 'fallback-secret-123'; // Opaque tokens can also just be random crypto strings, but we'll use a strong generator.
@@ -64,6 +97,7 @@ db.exec(`
     username TEXT NOT NULL UNIQUE,
     password_hash TEXT NOT NULL,
     refresh_token TEXT,
+    is_admin BOOLEAN DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
 
@@ -139,11 +173,9 @@ db.exec(`
     operacao TEXT NOT NULL CHECK(operacao IN ('compra','venda')),
     ativo TEXT NOT NULL,
     data TEXT NOT NULL,
-    quantidade REAL NOT NULL,
-    preco REAL NOT NULL,
-    moeda TEXT NOT NULL DEFAULT 'BRL',
-    valorTotal REAL NOT NULL,
-    taxaCambio REAL NOT NULL DEFAULT 1
+    descricao TEXT NOT NULL,
+    valor REAL NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pendente'
   );
 
   CREATE TABLE IF NOT EXISTS dividend_cache (
@@ -185,6 +217,7 @@ migrate("ALTER TABLE metas_planejamento ADD COLUMN usuario_id INTEGER NOT NULL D
 migrate("ALTER TABLE carteira ADD COLUMN usuario_id INTEGER NOT NULL DEFAULT 1");
 migrate("ALTER TABLE lancamentos_investimentos ADD COLUMN usuario_id INTEGER NOT NULL DEFAULT 1");
 migrate("ALTER TABLE metas_financeiras ADD COLUMN usuario_id INTEGER NOT NULL DEFAULT 1");
+migrate("ALTER TABLE usuarios ADD COLUMN is_admin BOOLEAN DEFAULT 0");
 
 // Fix UNIQUE constraints by recreating indexes or tables (if needed later)
 // For now, assigning user 1 to old data makes it seamlessly compatible.
@@ -293,6 +326,91 @@ app.post('/api/logout', (req, res) => {
   res.clearCookie('accessToken');
   res.clearCookie('refreshToken', { path: '/api/refresh' });
   res.json({ message: 'Logout efetuado com sucesso.' });
+});
+
+app.get('/api/me', requireAuth, (req: any, res) => {
+  const user = db.prepare('SELECT id, username, is_admin FROM usuarios WHERE id = ?').get(req.usuarioId) as any;
+  if (!user) return res.status(404).json({ error: 'Usuário não encontrado.' });
+  res.json({ id: user.id, username: user.username, isAdmin: user.is_admin === 1 || user.id === 1 });
+});
+
+app.get('/api/admin/stats', requireAuth, (req: any, res) => {
+  const user = db.prepare('SELECT id, is_admin FROM usuarios WHERE id = ?').get(req.usuarioId) as any;
+  if (!user || (user.is_admin !== 1 && user.id !== 1)) {
+    return res.status(403).json({ error: 'Acesso negado. Apenas administradores.' });
+  }
+
+  // Aggregate by IP
+  const ipMap = new Map<string, { total: number; blocked: number; lastSeen: string; routes: Record<string, number> }>();
+
+  for (const log of requestLogs) {
+    if (!ipMap.has(log.ip)) {
+      ipMap.set(log.ip, { total: 0, blocked: 0, lastSeen: log.timestamp, routes: {} });
+    }
+    const e = ipMap.get(log.ip)!;
+    e.total++;
+    if (log.status >= 400) e.blocked++;
+    if (log.timestamp > e.lastSeen) e.lastSeen = log.timestamp;
+    e.routes[log.route] = (e.routes[log.route] || 0) + 1;
+  }
+
+  const topIps = [...ipMap.entries()]
+    .map(([ip, d]) => ({ ip, totalRequests: d.total, blocked: d.blocked, lastSeen: d.lastSeen, routes: d.routes }))
+    .sort((a, b) => b.totalRequests - a.totalRequests)
+    .slice(0, 20);
+
+  // Requests per hour (last 24h)
+  const now = new Date();
+  const hourMap = new Map<string, number>();
+  for (let i = 23; i >= 0; i--) {
+    const d = new Date(now.getTime() - i * 3_600_000);
+    hourMap.set(`${String(d.getHours()).padStart(2, '0')}h`, 0);
+  }
+  for (const log of requestLogs) {
+    const d = new Date(log.timestamp);
+    if ((now.getTime() - d.getTime()) / 3_600_000 <= 24) {
+      const key = `${String(d.getHours()).padStart(2, '0')}h`;
+      hourMap.set(key, (hourMap.get(key) || 0) + 1);
+    }
+  }
+
+  // Route breakdown (top 10)
+  const routeMap = new Map<string, number>();
+  for (const log of requestLogs) {
+    routeMap.set(log.route, (routeMap.get(log.route) || 0) + 1);
+  }
+  const routeBreakdown = [...routeMap.entries()]
+    .map(([route, count]) => ({ route, count }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 10);
+
+  // Status breakdown
+  const statusMap: Record<string, number> = { '2xx': 0, '3xx': 0, '4xx': 0, '5xx': 0 };
+  for (const log of requestLogs) {
+    const key = `${Math.floor(log.status / 100)}xx`;
+    if (key in statusMap) statusMap[key]++;
+  }
+
+  res.json({
+    totalRequests: requestLogs.length,
+    uniqueIps: ipMap.size,
+    blockedRequests: requestLogs.filter(l => l.status >= 400).length,
+    topIps,
+    recentLogs: requestLogs.slice(-100),
+    requestsPerHour: [...hourMap.entries()].map(([hour, count]) => ({ hour, count })),
+    routeBreakdown,
+    statusBreakdown: Object.entries(statusMap).filter(([, c]) => c > 0).map(([status, count]) => ({ status, count })),
+  });
+});
+
+app.delete('/api/admin/logs/clear', requireAuth, (req: any, res) => {
+  const user = db.prepare('SELECT id, is_admin FROM usuarios WHERE id = ?').get(req.usuarioId) as any;
+  if (!user || (user.is_admin !== 1 && user.id !== 1)) {
+    return res.status(403).json({ error: 'Acesso negado. Apenas administradores.' });
+  }
+
+  requestLogs.splice(0, requestLogs.length);
+  res.json({ message: 'Logs limpos com sucesso.' });
 });
 
 // ===================== ROUTES =====================

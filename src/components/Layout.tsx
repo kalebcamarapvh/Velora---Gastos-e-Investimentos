@@ -19,7 +19,8 @@ import {
   Sun,
   Moon,
   Eye,
-  EyeOff
+  EyeOff,
+  Terminal
 } from 'lucide-react';
 import { useTheme } from '../contexts/ThemeContext';
 import { usePrivacy } from '../contexts/PrivacyContext';
@@ -32,8 +33,16 @@ interface LayoutProps {
 
 export const Layout: React.FC<LayoutProps> = ({ children, activeTab, setActiveTab }) => {
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+  const [isAdmin, setIsAdmin] = useState(false);
   const { isDark: dark, toggle } = useTheme();
   const { hidden, togglePrivacy } = usePrivacy();
+
+  React.useEffect(() => {
+    fetch('/api/me', { credentials: 'include' })
+      .then(res => res.json())
+      .then(data => setIsAdmin(data.isAdmin))
+      .catch(console.error);
+  }, []);
 
   const menuItems = [
     { id: 'dashboard', label: 'Dashboard Financeiro', icon: LayoutDashboard },
@@ -50,6 +59,7 @@ export const Layout: React.FC<LayoutProps> = ({ children, activeTab, setActiveTa
     { id: 'assinaturas', label: 'Controle de Assinaturas', icon: Repeat },
     { id: 'dividas', label: 'Controle de Dívidas', icon: CreditCard },
     { id: 'configuracoes', label: 'Configurações', icon: Settings },
+    ...(isAdmin ? [{ id: 'admin', label: 'Admin / Logs', icon: Terminal }] : []),
   ];
 
   return (
