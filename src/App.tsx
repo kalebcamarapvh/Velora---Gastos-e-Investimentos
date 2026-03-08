@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { ThemeProvider } from './contexts/ThemeContext';
 import { PrivacyProvider } from './contexts/PrivacyContext';
 import { Layout } from './components/Layout';
@@ -21,9 +21,23 @@ import { Simulador } from './components/tabs/Simulador';
 import { Assinaturas } from './components/tabs/Assinaturas';
 import { Dividas } from './components/tabs/Dividas';
 import { Configuracoes } from './components/tabs/Configuracoes';
+import { Auth } from './components/Auth';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('dashboard');
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    // Validate session seamlessly silently
+    fetch('/api/refresh', { method: 'POST', credentials: 'include' })
+      .then(res => setIsAuthenticated(res.ok))
+      .catch(() => setIsAuthenticated(false));
+
+    // Global listener for Unauth (401 from interceptor)
+    const handleLogout = () => setIsAuthenticated(false);
+    window.addEventListener('auth-unauthorized', handleLogout);
+    return () => window.removeEventListener('auth-unauthorized', handleLogout);
+  }, []);
 
   const renderTab = () => {
     switch (activeTab) {
@@ -44,6 +58,14 @@ export default function App() {
       default: return <Dashboard />;
     }
   };
+
+  if (isAuthenticated === null) {
+    return <div className="min-h-screen bg-[#121212] flex items-center justify-center text-gray-500">Validando sessão segura...</div>;
+  }
+
+  if (!isAuthenticated) {
+    return <Auth onLogin={() => setIsAuthenticated(true)} />;
+  }
 
   return (
     <ThemeProvider>

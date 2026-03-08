@@ -5,6 +5,11 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
+import bcrypt from 'bcrypt';
+import jwt from 'jsonwebtoken';
+import cookieParser from 'cookie-parser';
+import { z } from 'zod';
+import crypto from 'crypto';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -18,6 +23,10 @@ app.use(helmet({
 app.use(express.static(path.join(__dirname, 'dist')));
 
 app.use(express.json());
+app.use(cookieParser());
+
+const JWT_SECRET = process.env.API_SECRET_TOKEN || 'fallback-secret-123';
+const REFRESH_SECRET = process.env.API_SECRET_TOKEN || 'fallback-secret-123'; // Opaque tokens can also just be random crypto strings, but we'll use a strong generator.
 
 // --- GLOBAL API RATE LIMITING ---
 app.use('/api/', rateLimit({
@@ -26,15 +35,14 @@ app.use('/api/', rateLimit({
   message: { error: 'Muitas requisições. Tente novamente mais tarde.' }
 }));
 
-// --- BEARER TOKEN AUTH (VPN PROTECTION) ---
-app.use('/api', (req, res, next) => {
-  const secret = process.env.API_SECRET_TOKEN;
-  if (secret) {
-    const authHeader = req.headers.authorization;
-    if (!authHeader || authHeader !== `Bearer ${secret}`) {
-      return res.status(401).json({ error: 'Unauthorized. Bearer token inválido ou ausente.' });
-    }
-  }
+// --- BEARER TOKEN AUTH (VPN PROTECTION) DEPRECATED IN V2 ---
+// Replaced by HTTP-Only Cookie Session Middleware
+// We leave CORS headers to accept credentials
+app.use((_req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Credentials', 'true');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
   next();
 });
 
@@ -51,8 +59,17 @@ const db = new Database(dbPath);
 db.pragma('journal_mode = WAL');
 
 db.exec(`
+  CREATE TABLE IF NOT EXISTS usuarios (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT NOT NULL UNIQUE,
+    password_hash TEXT NOT NULL,
+    refresh_token TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
   CREATE TABLE IF NOT EXISTS gastos (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    usuario_id INTEGER NOT NULL DEFAULT 1,
     data TEXT NOT NULL,
     descricao TEXT NOT NULL,
     categoria TEXT NOT NULL,
@@ -74,6 +91,7 @@ db.exec(`
 
   CREATE TABLE IF NOT EXISTS assinaturas (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    usuario_id INTEGER NOT NULL DEFAULT 1,
     servico TEXT NOT NULL,
     categoria TEXT NOT NULL,
     periodicidade TEXT NOT NULL,
@@ -158,105 +176,217 @@ migrate("ALTER TABLE lancamentos_investimentos ADD COLUMN taxaCambio REAL NOT NU
 migrate("ALTER TABLE metas_financeiras ADD COLUMN variacaoAnual REAL");
 migrate("ALTER TABLE metas_financeiras ADD COLUMN valorFinalMeta REAL");
 
+// Migrate multi-tenant
+migrate("ALTER TABLE gastos ADD COLUMN usuario_id INTEGER NOT NULL DEFAULT 1");
+migrate("ALTER TABLE receitas ADD COLUMN usuario_id INTEGER NOT NULL DEFAULT 1");
+migrate("ALTER TABLE assinaturas ADD COLUMN usuario_id INTEGER NOT NULL DEFAULT 1");
+migrate("ALTER TABLE dividas ADD COLUMN usuario_id INTEGER NOT NULL DEFAULT 1");
+migrate("ALTER TABLE metas_planejamento ADD COLUMN usuario_id INTEGER NOT NULL DEFAULT 1");
+migrate("ALTER TABLE carteira ADD COLUMN usuario_id INTEGER NOT NULL DEFAULT 1");
+migrate("ALTER TABLE lancamentos_investimentos ADD COLUMN usuario_id INTEGER NOT NULL DEFAULT 1");
+migrate("ALTER TABLE metas_financeiras ADD COLUMN usuario_id INTEGER NOT NULL DEFAULT 1");
+
+// Fix UNIQUE constraints by recreating indexes or tables (if needed later)
+// For now, assigning user 1 to old data makes it seamlessly compatible.
+
+// ===================== MIDDLEWARES & AUTH =====================
+const requireAuth = (req: express.Request, res: express.Response, next: express.NextFunction) => {
+  const token = req.cookies.accessToken;
+  if (!token) return res.status(401).json({ error: 'Sessão expirada ou não autenticada.' });
+
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET) as { id: number };
+    (req as any).usuarioId = decoded.id;
+    next();
+  } catch (err) {
+    return res.status(401).json({ error: 'Token inválido ou expirado.' });
+  }
+};
+
 // ===================== SEED =====================
 // Seeds removidos a pedido do usuário para iniciar o app 100% limpo.
+
+// ===================== AUTH ROUTES (OWASP V2) =====================
+const authSchema = z.object({
+  username: z.string().min(3, "Mínimo de 3 caracteres").max(50),
+  password: z.string().min(6, "Senha muito curta. Mínimo de 6 caracteres.")
+});
+
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  message: { error: 'Muitas tentativas de login. Sua conta foi temporariamente bloqueada. Tente novamente em 15 minutos.' }
+});
+
+app.post('/api/register', async (req, res) => {
+  try {
+    const { username, password } = authSchema.parse(req.body);
+    const hash = await bcrypt.hash(password, 12); // OWASP Standard 12 rounds
+    try {
+      db.prepare('INSERT INTO usuarios (username, password_hash) VALUES (?, ?)').run(username, hash);
+      res.status(201).json({ message: 'Usuário registrado com sucesso. Faça seu login.' });
+    } catch {
+      res.status(400).json({ error: 'Username já existe.' });
+    }
+  } catch (err: any) {
+    if (err instanceof z.ZodError) return res.status(400).json({ error: err.issues[0].message });
+    res.status(400).json({ error: 'Dados inválidos.' });
+  }
+});
+
+app.post('/api/login', loginLimiter, async (req, res) => {
+  try {
+    const { username, password } = authSchema.parse(req.body);
+    const user = db.prepare('SELECT * FROM usuarios WHERE username = ?').get(username) as any;
+
+    if (!user || !(await bcrypt.compare(password, user.password_hash))) {
+      return res.status(401).json({ error: 'Credenciais inválidas.' });
+    }
+
+    // Access Token (Curtíssimo, 15 min)
+    const accessToken = jwt.sign({ id: user.id }, JWT_SECRET, { expiresIn: '15m' });
+    // Refresh Token Opaco (7 dias)
+    const refreshToken = crypto.randomBytes(40).toString('hex');
+
+    db.prepare('UPDATE usuarios SET refresh_token = ? WHERE id = ?').run(refreshToken, user.id);
+
+    const isProd = process.env.NODE_ENV === 'production';
+    res.cookie('accessToken', accessToken, { httpOnly: true, secure: isProd, sameSite: 'strict', maxAge: 15 * 60 * 1000 });
+    res.cookie('refreshToken', refreshToken, { httpOnly: true, secure: isProd, sameSite: 'strict', maxAge: 7 * 24 * 60 * 60 * 1000, path: '/api/refresh' });
+
+    res.json({ message: 'Login bem-sucedido', username: user.username });
+  } catch (err: any) {
+    if (err instanceof z.ZodError) return res.status(400).json({ error: err.issues[0].message });
+    res.status(400).json({ error: 'Dados inválidos.' });
+  }
+});
+
+app.post('/api/refresh', (req, res) => {
+  const { refreshToken } = req.cookies;
+  if (!refreshToken) return res.status(401).json({ error: 'Não autorizado.' });
+
+  const user = db.prepare('SELECT * FROM usuarios WHERE refresh_token = ?').get(refreshToken) as any;
+  if (!user) return res.status(403).json({ error: 'Sessão expirada. Faça login novamente.' });
+
+  // JWT e Opaco Tokens rotation
+  const newAccessToken = jwt.sign({ id: user.id }, JWT_SECRET, { expiresIn: '15m' });
+  const newRefreshToken = crypto.randomBytes(40).toString('hex');
+
+  db.prepare('UPDATE usuarios SET refresh_token = ? WHERE id = ?').run(newRefreshToken, user.id);
+
+  const isProd = process.env.NODE_ENV === 'production';
+  res.cookie('accessToken', newAccessToken, { httpOnly: true, secure: isProd, sameSite: 'strict', maxAge: 15 * 60 * 1000 });
+  res.cookie('refreshToken', newRefreshToken, { httpOnly: true, secure: isProd, sameSite: 'strict', maxAge: 7 * 24 * 60 * 60 * 1000, path: '/api/refresh' });
+
+  res.json({ message: 'Token renovado' });
+});
+
+app.post('/api/logout', (req, res) => {
+  const { refreshToken } = req.cookies;
+  if (refreshToken) {
+    db.prepare('UPDATE usuarios SET refresh_token = NULL WHERE refresh_token = ?').run(refreshToken);
+  }
+  res.clearCookie('accessToken');
+  res.clearCookie('refreshToken', { path: '/api/refresh' });
+  res.json({ message: 'Logout efetuado com sucesso.' });
+});
 
 // ===================== ROUTES =====================
 
 // --- Gastos ---
-app.get('/api/gastos', (_req, res) => {
-  res.json(db.prepare('SELECT * FROM gastos ORDER BY data DESC').all());
+app.get('/api/gastos', requireAuth, (req: any, res) => {
+  res.json(db.prepare('SELECT * FROM gastos WHERE usuario_id = ? ORDER BY data DESC').all(req.usuarioId));
 });
-app.post('/api/gastos', (req, res) => {
+app.post('/api/gastos', requireAuth, (req: any, res) => {
   const { data, descricao, categoria, subcategoria, pagamento, conta, valor } = req.body;
-  const r = db.prepare('INSERT INTO gastos (data,descricao,categoria,subcategoria,pagamento,conta,valor) VALUES (?,?,?,?,?,?,?)').run(data, descricao, categoria, subcategoria, pagamento, conta, valor);
+  const r = db.prepare('INSERT INTO gastos (usuario_id, data,descricao,categoria,subcategoria,pagamento,conta,valor) VALUES (?,?,?,?,?,?,?,?)').run(req.usuarioId, data, descricao, categoria, subcategoria, pagamento, conta, valor);
   res.status(201).json({ id: r.lastInsertRowid, data, descricao, categoria, subcategoria, pagamento, conta, valor });
 });
-app.delete('/api/gastos/:id', (req, res) => {
-  db.prepare('DELETE FROM gastos WHERE id = ?').run(req.params.id);
+app.delete('/api/gastos/:id', requireAuth, (req: any, res) => {
+  db.prepare('DELETE FROM gastos WHERE id = ? AND usuario_id = ?').run(req.params.id, req.usuarioId);
   res.status(204).send();
 });
 
 // --- Receitas ---
-app.get('/api/receitas', (_req, res) => {
-  res.json(db.prepare('SELECT * FROM receitas ORDER BY data DESC').all());
+app.get('/api/receitas', requireAuth, (req: any, res) => {
+  res.json(db.prepare('SELECT * FROM receitas WHERE usuario_id = ? ORDER BY data DESC').all(req.usuarioId));
 });
-app.post('/api/receitas', (req, res) => {
+app.post('/api/receitas', requireAuth, (req: any, res) => {
   const { data, descricao, categoria, origem, conta, valor } = req.body;
-  const r = db.prepare('INSERT INTO receitas (data,descricao,categoria,origem,conta,valor) VALUES (?,?,?,?,?,?)').run(data, descricao, categoria, origem, conta, valor);
+  const r = db.prepare('INSERT INTO receitas (usuario_id, data,descricao,categoria,origem,conta,valor) VALUES (?,?,?,?,?,?,?)').run(req.usuarioId, data, descricao, categoria, origem, conta, valor);
   res.status(201).json({ id: r.lastInsertRowid, data, descricao, categoria, origem, conta, valor });
 });
-app.delete('/api/receitas/:id', (req, res) => {
-  db.prepare('DELETE FROM receitas WHERE id = ?').run(req.params.id);
+app.delete('/api/receitas/:id', requireAuth, (req: any, res) => {
+  db.prepare('DELETE FROM receitas WHERE id = ? AND usuario_id = ?').run(req.params.id, req.usuarioId);
   res.status(204).send();
 });
 
 // --- Assinaturas ---
-app.get('/api/assinaturas', (_req, res) => {
-  res.json(db.prepare('SELECT * FROM assinaturas ORDER BY id ASC').all());
+app.get('/api/assinaturas', requireAuth, (req: any, res) => {
+  res.json(db.prepare('SELECT * FROM assinaturas WHERE usuario_id = ? ORDER BY id ASC').all(req.usuarioId));
 });
-app.post('/api/assinaturas', (req, res) => {
+app.post('/api/assinaturas', requireAuth, (req: any, res) => {
   const { servico, categoria, periodicidade, dataCobranca, valor } = req.body;
-  const r = db.prepare('INSERT INTO assinaturas (servico,categoria,periodicidade,dataCobranca,valor) VALUES (?,?,?,?,?)').run(servico, categoria, periodicidade, dataCobranca, valor);
+  const r = db.prepare('INSERT INTO assinaturas (usuario_id, servico,categoria,periodicidade,dataCobranca,valor) VALUES (?,?,?,?,?,?)').run(req.usuarioId, servico, categoria, periodicidade, dataCobranca, valor);
   res.status(201).json({ id: r.lastInsertRowid, servico, categoria, periodicidade, dataCobranca, valor });
 });
-app.delete('/api/assinaturas/:id', (req, res) => {
-  db.prepare('DELETE FROM assinaturas WHERE id = ?').run(req.params.id);
+app.delete('/api/assinaturas/:id', requireAuth, (req: any, res) => {
+  db.prepare('DELETE FROM assinaturas WHERE id = ? AND usuario_id = ?').run(req.params.id, req.usuarioId);
   res.status(204).send();
 });
 
 // --- Dívidas ---
-app.get('/api/dividas', (_req, res) => {
-  res.json(db.prepare('SELECT * FROM dividas ORDER BY id ASC').all());
+app.get('/api/dividas', requireAuth, (req: any, res) => {
+  res.json(db.prepare('SELECT * FROM dividas WHERE usuario_id = ? ORDER BY id ASC').all(req.usuarioId));
 });
-app.post('/api/dividas', (req, res) => {
+app.post('/api/dividas', requireAuth, (req: any, res) => {
   const { tipo, valorTotal, taxaJuros, parcela, saldoRestante, prazo } = req.body;
-  const r = db.prepare('INSERT INTO dividas (tipo,valorTotal,taxaJuros,parcela,saldoRestante,prazo) VALUES (?,?,?,?,?,?)').run(tipo, valorTotal, taxaJuros, parcela, saldoRestante, prazo);
+  const r = db.prepare('INSERT INTO dividas (usuario_id, tipo,valorTotal,taxaJuros,parcela,saldoRestante,prazo) VALUES (?,?,?,?,?,?,?)').run(req.usuarioId, tipo, valorTotal, taxaJuros, parcela, saldoRestante, prazo);
   res.status(201).json({ id: r.lastInsertRowid, tipo, valorTotal, taxaJuros, parcela, saldoRestante, prazo });
 });
-app.delete('/api/dividas/:id', (req, res) => {
-  db.prepare('DELETE FROM dividas WHERE id = ?').run(req.params.id);
+app.delete('/api/dividas/:id', requireAuth, (req: any, res) => {
+  db.prepare('DELETE FROM dividas WHERE id = ? AND usuario_id = ?').run(req.params.id, req.usuarioId);
   res.status(204).send();
 });
 
 // --- Metas Planejamento ---
-app.get('/api/metas-planejamento/:ano', (req, res) => {
+app.get('/api/metas-planejamento/:ano', requireAuth, (req: any, res) => {
   const ano = Number(req.params.ano);
-  const saved = db.prepare('SELECT * FROM metas_planejamento WHERE ano = ?').all(ano) as any[];
+  const saved = db.prepare('SELECT * FROM metas_planejamento WHERE ano = ? AND usuario_id = ?').all(ano, req.usuarioId) as any[];
   const meses = Array.from({ length: 12 }, (_, i) => {
     const found = saved.find((r: any) => r.mes === i + 1);
     return found || { id: null, ano, mes: i + 1, receitaPrevista: 0, gastoPrevisto: 0, metaInvestimento: 0, dividendosEsperados: 0 };
   });
   res.json(meses);
 });
-app.put('/api/metas-planejamento/:ano/:mes', (req, res) => {
+app.put('/api/metas-planejamento/:ano/:mes', requireAuth, (req: any, res) => {
   const ano = Number(req.params.ano);
   const mes = Number(req.params.mes);
   const { receitaPrevista, gastoPrevisto, metaInvestimento, dividendosEsperados } = req.body;
-  db.prepare(`
-    INSERT INTO metas_planejamento (ano,mes,receitaPrevista,gastoPrevisto,metaInvestimento,dividendosEsperados)
-    VALUES (?,?,?,?,?,?)
-    ON CONFLICT(ano,mes) DO UPDATE SET
-      receitaPrevista=excluded.receitaPrevista,
-      gastoPrevisto=excluded.gastoPrevisto,
-      metaInvestimento=excluded.metaInvestimento,
-      dividendosEsperados=excluded.dividendosEsperados
-  `).run(ano, mes, receitaPrevista, gastoPrevisto, metaInvestimento, dividendosEsperados);
+
+  // No conflito, nós deletamos e inserimos ou usamos UPDATE com usuario_id seguro 
+  const existing = db.prepare('SELECT id FROM metas_planejamento WHERE ano=? AND mes=? AND usuario_id=?').get(ano, mes, req.usuarioId) as any;
+  if (existing) {
+    db.prepare('UPDATE metas_planejamento SET receitaPrevista=?, gastoPrevisto=?, metaInvestimento=?, dividendosEsperados=? WHERE id=?').run(receitaPrevista, gastoPrevisto, metaInvestimento, dividendosEsperados, existing.id);
+  } else {
+    db.prepare('INSERT INTO metas_planejamento (usuario_id,ano,mes,receitaPrevista,gastoPrevisto,metaInvestimento,dividendosEsperados) VALUES (?,?,?,?,?,?,?)').run(req.usuarioId, ano, mes, receitaPrevista, gastoPrevisto, metaInvestimento, dividendosEsperados);
+  }
+
   res.json({ ano, mes, receitaPrevista, gastoPrevisto, metaInvestimento, dividendosEsperados });
 });
 
 // --- Carteira ---
-app.get('/api/carteira', (_req, res) => {
+app.get('/api/carteira', requireAuth, (req: any, res) => {
   // Only return assets with quantity > 0
-  res.json(db.prepare('SELECT * FROM carteira WHERE quantidade > 0 ORDER BY tipo, ativo').all());
+  res.json(db.prepare('SELECT * FROM carteira WHERE quantidade > 0 AND usuario_id = ? ORDER BY tipo, ativo').all(req.usuarioId));
 });
 
 // --- Lançamentos de Investimentos ---
-app.get('/api/lancamentos-investimentos', (_req, res) => {
-  res.json(db.prepare('SELECT * FROM lancamentos_investimentos ORDER BY data DESC, id DESC').all());
+app.get('/api/lancamentos-investimentos', requireAuth, (req: any, res) => {
+  res.json(db.prepare('SELECT * FROM lancamentos_investimentos WHERE usuario_id = ? ORDER BY data DESC, id DESC').all(req.usuarioId));
 });
 
-app.post('/api/lancamentos-investimentos', (req, res) => {
+app.post('/api/lancamentos-investimentos', requireAuth, (req: any, res) => {
   const { tipo, operacao, ativo, data, quantidade: qty, preco, moeda, valorTotal, taxaCambio: tc } = req.body;
   const ativoUpper = String(ativo).toUpperCase();
   const qtd = Number(qty);
@@ -271,17 +401,17 @@ app.post('/api/lancamentos-investimentos', (req, res) => {
 
   // 1. Insert lancamento
   const result = db.prepare(
-    'INSERT INTO lancamentos_investimentos (tipo,operacao,ativo,data,quantidade,preco,moeda,valorTotal,taxaCambio) VALUES (?,?,?,?,?,?,?,?,?)'
-  ).run(tipo, operacao, ativoUpper, data, qtd, prc, moeda, vt, taxaCambio);
+    'INSERT INTO lancamentos_investimentos (usuario_id,tipo,operacao,ativo,data,quantidade,preco,moeda,valorTotal,taxaCambio) VALUES (?,?,?,?,?,?,?,?,?,?)'
+  ).run(req.usuarioId, tipo, operacao, ativoUpper, data, qtd, prc, moeda, vt, taxaCambio);
 
   // 2. Update carteira
-  const existing = db.prepare('SELECT * FROM carteira WHERE ativo = ?').get(ativoUpper) as any;
+  const existing = db.prepare('SELECT * FROM carteira WHERE ativo = ? AND usuario_id = ?').get(ativoUpper, req.usuarioId) as any;
 
   if (operacao === 'compra') {
     if (!existing) {
       db.prepare(
-        'INSERT INTO carteira (ativo,tipo,quantidade,precoMedio,precoAtual,valorInvestido,valorAtual,moeda,taxaCambio) VALUES (?,?,?,?,?,?,?,?,?)'
-      ).run(ativoUpper, tipo, qtd, prc, prc, vtBRL, vtBRL, moeda, taxaCambio);
+        'INSERT INTO carteira (usuario_id,ativo,tipo,quantidade,precoMedio,precoAtual,valorInvestido,valorAtual,moeda,taxaCambio) VALUES (?,?,?,?,?,?,?,?,?,?)'
+      ).run(req.usuarioId, ativoUpper, tipo, qtd, prc, prc, vtBRL, vtBRL, moeda, taxaCambio);
     } else {
       const novaQtd = existing.quantidade + qtd;
       // precoMedio in native currency (weighted average)
@@ -289,8 +419,8 @@ app.post('/api/lancamentos-investimentos', (req, res) => {
       const novoValorInvestido = novaQtd * novoPrecoMedio * (isUSD ? taxaCambio : 1);
       const novoValorAtual = novaQtd * prc * (isUSD ? taxaCambio : 1);
       db.prepare(
-        'UPDATE carteira SET quantidade=?,precoMedio=?,precoAtual=?,valorInvestido=?,valorAtual=?,taxaCambio=? WHERE ativo=?'
-      ).run(novaQtd, novoPrecoMedio, prc, novoValorInvestido, novoValorAtual, taxaCambio, ativoUpper);
+        'UPDATE carteira SET quantidade=?,precoMedio=?,precoAtual=?,valorInvestido=?,valorAtual=?,taxaCambio=? WHERE id=?'
+      ).run(novaQtd, novoPrecoMedio, prc, novoValorInvestido, novoValorAtual, taxaCambio, existing.id);
     }
   } else if (operacao === 'venda') {
     if (!existing) {
@@ -302,15 +432,15 @@ app.post('/api/lancamentos-investimentos', (req, res) => {
     const novaQtd = existing.quantidade - qtd;
     if (novaQtd <= 0.000001) {
       // Sold everything — remove from carteira
-      db.prepare('DELETE FROM carteira WHERE ativo = ?').run(ativoUpper);
+      db.prepare('DELETE FROM carteira WHERE id = ?').run(existing.id);
     } else {
       const existingIsUSD = existing.moeda === 'USD';
       const rate = existing.taxaCambio || 1;
       const novoValorInvestido = novaQtd * existing.precoMedio * (existingIsUSD ? rate : 1);
       const novoValorAtual = novaQtd * existing.precoAtual * (existingIsUSD ? rate : 1);
       db.prepare(
-        'UPDATE carteira SET quantidade=?,valorInvestido=?,valorAtual=? WHERE ativo=?'
-      ).run(novaQtd, novoValorInvestido, novoValorAtual, ativoUpper);
+        'UPDATE carteira SET quantidade=?,valorInvestido=?,valorAtual=? WHERE id=?'
+      ).run(novaQtd, novoValorInvestido, novoValorAtual, existing.id);
     }
   }
 
@@ -320,16 +450,16 @@ app.post('/api/lancamentos-investimentos', (req, res) => {
   });
 });
 
-app.delete('/api/lancamentos-investimentos/:id', (req, res) => {
+app.delete('/api/lancamentos-investimentos/:id', requireAuth, (req: any, res) => {
   const { id } = req.params;
-  const target = db.prepare('SELECT * FROM lancamentos_investimentos WHERE id = ?').get(id) as any;
+  const target = db.prepare('SELECT * FROM lancamentos_investimentos WHERE id = ? AND usuario_id = ?').get(id, req.usuarioId) as any;
 
   if (!target) {
     return res.status(404).json({ error: 'Lançamento não encontrado' });
   }
 
   // Reverse the operation in carteira
-  const existing = db.prepare('SELECT * FROM carteira WHERE ativo = ?').get(target.ativo) as any;
+  const existing = db.prepare('SELECT * FROM carteira WHERE ativo = ? AND usuario_id = ?').get(target.ativo, req.usuarioId) as any;
   const isUSD = target.moeda === 'USD';
   const taxaCambio = target.taxaCambio || 1;
   const vtBRL = isUSD ? target.valorTotal * taxaCambio : target.valorTotal;
@@ -350,7 +480,7 @@ app.delete('/api/lancamentos-investimentos/:id', (req, res) => {
     }
 
     if (novaQtd <= 0.000001) {
-      db.prepare('DELETE FROM carteira WHERE ativo = ?').run(target.ativo);
+      db.prepare('DELETE FROM carteira WHERE id = ?').run(existing.id);
     } else {
       const novoPrecoMedio = target.operacao === 'compra'
         ? Math.max(0, novoValorInvestido / novaQtd / (isUSD ? taxaCambio : 1))
@@ -359,8 +489,8 @@ app.delete('/api/lancamentos-investimentos/:id', (req, res) => {
       const novoValorAtual = novaQtd * existing.precoAtual * (isUSD ? taxaCambio : 1);
 
       db.prepare(
-        'UPDATE carteira SET quantidade=?, precoMedio=?, valorInvestido=?, valorAtual=? WHERE ativo=?'
-      ).run(novaQtd, novoPrecoMedio, Math.max(0, novoValorInvestido), novoValorAtual, target.ativo);
+        'UPDATE carteira SET quantidade=?, precoMedio=?, valorInvestido=?, valorAtual=? WHERE id=?'
+      ).run(novaQtd, novoPrecoMedio, Math.max(0, novoValorInvestido), novoValorAtual, existing.id);
     }
   }
 
@@ -373,9 +503,9 @@ app.delete('/api/lancamentos-investimentos/:id', (req, res) => {
 const BRAPI_TOKEN = process.env.BRAPI_TOKEN || '';
 const BRAPI_BASE = 'https://brapi.dev/api';
 
-app.get('/api/dividendos', async (req, res) => {
+app.get('/api/dividendos', requireAuth, async (req: any, res) => {
   // Get all unique ativos from carteira where qty > 0
-  const carteiraAtivos = (db.prepare('SELECT DISTINCT ativo FROM carteira WHERE quantidade > 0').all() as any[])
+  const carteiraAtivos = (db.prepare('SELECT DISTINCT ativo FROM carteira WHERE quantidade > 0 AND usuario_id = ?').all(req.usuarioId) as any[])
     .map((r: any) => r.ativo)
     .filter(Boolean);
 
@@ -417,7 +547,7 @@ app.get('/api/dividendos', async (req, res) => {
     }
 
     // Get this ticker's position from carteira
-    const position = db.prepare('SELECT quantidade FROM carteira WHERE ativo = ?').get(ticker) as any;
+    const position = db.prepare('SELECT quantidade FROM carteira WHERE ativo = ? AND usuario_id = ?').get(ticker, req.usuarioId) as any;
     const quantidade = position?.quantidade ?? 0;
 
     // Map dividends to response — include all that have paymentDate or lastDatePrior
@@ -472,7 +602,7 @@ const quotesLimiter = rateLimit({
 });
 
 // --- Cotações em Tempo Real (brapi.dev) ---
-app.get('/api/quotes', quotesLimiter, async (req, res) => {
+app.get('/api/quotes', requireAuth, quotesLimiter, async (req: any, res) => {
   if (!BRAPI_TOKEN) {
     return res.status(400).json({ error: 'Token BRAPI não configurado no .env' });
   }
@@ -554,7 +684,7 @@ app.get('/api/quotes', quotesLimiter, async (req, res) => {
 });
 
 // ===================== DASHBOARD SUMMARY =====================
-app.get('/api/dashboard', async (req, res) => {
+app.get('/api/dashboard', requireAuth, async (req: any, res) => {
   const mesParam = req.query.mes as string; // e.g. '2026-03' or 'geral'
 
   let usdRate = 5.0; // fallback
@@ -575,12 +705,12 @@ app.get('/api/dashboard', async (req, res) => {
 
   // Determine available months from databases
   const dateSources = db.prepare(`
-    SELECT DISTINCT substr(data, 1, 7) as mes FROM gastos
+    SELECT DISTINCT substr(data, 1, 7) as mes FROM gastos WHERE usuario_id = ?
     UNION
-    SELECT DISTINCT substr(data, 1, 7) as mes FROM receitas
+    SELECT DISTINCT substr(data, 1, 7) as mes FROM receitas WHERE usuario_id = ?
     UNION
-    SELECT DISTINCT substr(data, 1, 7) as mes FROM lancamentos_investimentos
-  `).all() as { mes: string }[];
+    SELECT DISTINCT substr(data, 1, 7) as mes FROM lancamentos_investimentos WHERE usuario_id = ?
+  `).all(req.usuarioId, req.usuarioId, req.usuarioId) as { mes: string }[];
 
   let mesesDisponiveis = dateSources.map(r => r.mes).filter(Boolean).sort();
   if (!mesesDisponiveis.includes(currentMonthPrefix)) {
@@ -588,17 +718,17 @@ app.get('/api/dashboard', async (req, res) => {
     mesesDisponiveis.sort();
   }
 
-  let whereClause = '';
-  let params: string[] = [];
+  let whereClause = 'WHERE usuario_id = ?';
+  let params: any[] = [req.usuarioId];
 
   if (mesParam && mesParam !== 'geral') {
-    whereClause = 'WHERE data LIKE ?';
-    params = [`${mesParam}%`];
+    whereClause = 'WHERE data LIKE ? AND usuario_id = ?';
+    params = [`${mesParam}%`, req.usuarioId];
   } else if (!mesParam) {
     // Default to current month if no param is provided
-    whereClause = 'WHERE data LIKE ?';
-    params = [`${currentMonthPrefix}%`];
-  } // if 'geral', variables are empty
+    whereClause = 'WHERE data LIKE ? AND usuario_id = ?';
+    params = [`${currentMonthPrefix}%`, req.usuarioId];
+  }
 
   // 1. Receitas do Período
   const receitasRef = db.prepare(`SELECT SUM(valor) as total FROM receitas ${whereClause}`).get(...params) as any;
@@ -609,7 +739,7 @@ app.get('/api/dashboard', async (req, res) => {
   const gastosMensais = gastosRef?.total || 0;
 
   // 3. Valor Investido & Rentabilidade (Balances are typically absolute, not period-dependent)
-  const invRef = db.prepare(`SELECT SUM(valorInvestido) as investido, SUM(valorAtual) as atual FROM carteira WHERE quantidade > 0`).get() as any;
+  const invRef = db.prepare(`SELECT SUM(valorInvestido) as investido, SUM(valorAtual) as atual FROM carteira WHERE quantidade > 0 AND usuario_id = ?`).get(req.usuarioId) as any;
   const valorInvestido = invRef?.investido || 0;
   const valorAtual = invRef?.atual || 0;
 
@@ -618,14 +748,14 @@ app.get('/api/dashboard', async (req, res) => {
   const rentabilidadeCarteira = valorInvestido > 0 ? (lucroReal / valorInvestido) * 100 : 0;
 
   // 4. Dívidas Totais (Absolute)
-  const divRef = db.prepare(`SELECT SUM(saldoRestante) as total FROM dividas`).get() as any;
+  const divRef = db.prepare(`SELECT SUM(saldoRestante) as total FROM dividas WHERE usuario_id = ?`).get(req.usuarioId) as any;
   const dividasTotais = divRef?.total || 0;
 
   // 5. Caixa Total (All time Receitas - Gastos - Compras Investimentos + Vendas Investimentos)
-  const totalReceitasAllTime = (db.prepare(`SELECT SUM(valor) as total FROM receitas`).get() as any)?.total || 0;
-  const totalGastosAllTime = (db.prepare(`SELECT SUM(valor) as total FROM gastos`).get() as any)?.total || 0;
-  const totalAportesAllTime = (db.prepare(`SELECT SUM(valorTotal) as total FROM lancamentos_investimentos WHERE operacao='compra'`).get() as any)?.total || 0;
-  const totalSaquesAllTime = (db.prepare(`SELECT SUM(valorTotal) as total FROM lancamentos_investimentos WHERE operacao='venda'`).get() as any)?.total || 0;
+  const totalReceitasAllTime = (db.prepare(`SELECT SUM(valor) as total FROM receitas WHERE usuario_id = ?`).get(req.usuarioId) as any)?.total || 0;
+  const totalGastosAllTime = (db.prepare(`SELECT SUM(valor) as total FROM gastos WHERE usuario_id = ?`).get(req.usuarioId) as any)?.total || 0;
+  const totalAportesAllTime = (db.prepare(`SELECT SUM(valorTotal) as total FROM lancamentos_investimentos WHERE operacao='compra' AND usuario_id = ?`).get(req.usuarioId) as any)?.total || 0;
+  const totalSaquesAllTime = (db.prepare(`SELECT SUM(valorTotal) as total FROM lancamentos_investimentos WHERE operacao='venda' AND usuario_id = ?`).get(req.usuarioId) as any)?.total || 0;
 
   const caixaTotal = totalReceitasAllTime - totalGastosAllTime - totalAportesAllTime + totalSaquesAllTime;
 
@@ -649,7 +779,7 @@ app.get('/api/dashboard', async (req, res) => {
   });
 
   // Categorias de Patrimonio (Ações, FIIs, etc)
-  const categoriasRaw = db.prepare(`SELECT tipo, SUM(valorAtual) as valor FROM carteira WHERE quantidade > 0 GROUP BY tipo`).all() as any[];
+  const categoriasRaw = db.prepare(`SELECT tipo, SUM(valorAtual) as valor FROM carteira WHERE quantidade > 0 AND usuario_id = ? GROUP BY tipo`).all(req.usuarioId) as any[];
   const colorsCat = ['bg-violet-500', 'bg-emerald-500', 'bg-amber-500', 'bg-blue-500', 'bg-rose-500', 'bg-indigo-500'];
   const categoriasPatrimonio = categoriasRaw.map((c, i) => ({
     id: i + 1,
@@ -670,12 +800,12 @@ app.get('/api/dashboard', async (req, res) => {
   if (lastMonths.length === 0) lastMonths.push(currentMonthPrefix);
 
   for (const m of lastMonths) {
-    const recHist = (db.prepare(`SELECT SUM(valor) as total FROM receitas WHERE substr(data, 1, 7) <= ?`).get(m) as any)?.total || 0;
-    const gasHist = (db.prepare(`SELECT SUM(valor) as total FROM gastos WHERE substr(data, 1, 7) <= ?`).get(m) as any)?.total || 0;
+    const recHist = (db.prepare(`SELECT SUM(valor) as total FROM receitas WHERE substr(data, 1, 7) <= ? AND usuario_id = ?`).get(m, req.usuarioId) as any)?.total || 0;
+    const gasHist = (db.prepare(`SELECT SUM(valor) as total FROM gastos WHERE substr(data, 1, 7) <= ? AND usuario_id = ?`).get(m, req.usuarioId) as any)?.total || 0;
 
     // For Investimentos History
-    const comprasHist = (db.prepare(`SELECT SUM(valorTotal) as total FROM lancamentos_investimentos WHERE operacao='compra' AND substr(data, 1, 7) <= ?`).get(m) as any)?.total || 0;
-    const vendasHist = (db.prepare(`SELECT SUM(valorTotal) as total FROM lancamentos_investimentos WHERE operacao='venda' AND substr(data, 1, 7) <= ?`).get(m) as any)?.total || 0;
+    const comprasHist = (db.prepare(`SELECT SUM(valorTotal) as total FROM lancamentos_investimentos WHERE operacao='compra' AND substr(data, 1, 7) <= ? AND usuario_id = ?`).get(m, req.usuarioId) as any)?.total || 0;
+    const vendasHist = (db.prepare(`SELECT SUM(valorTotal) as total FROM lancamentos_investimentos WHERE operacao='venda' AND substr(data, 1, 7) <= ? AND usuario_id = ?`).get(m, req.usuarioId) as any)?.total || 0;
 
     // Convert YYYY-MM -> Nome do Mes Ex: Mar/26
     const [y, mm] = m.split('-');
@@ -741,16 +871,17 @@ app.get('/api/dashboard', async (req, res) => {
 });
 
 // ===================== METAS FINANCEIRAS =====================
-app.get('/api/metas-financeiras', (_req, res) => {
-  res.json(db.prepare('SELECT * FROM metas_financeiras ORDER BY id DESC').all());
+app.get('/api/metas-financeiras', requireAuth, (req: any, res) => {
+  res.json(db.prepare('SELECT * FROM metas_financeiras WHERE usuario_id = ? ORDER BY id DESC').all(req.usuarioId));
 });
 
-app.post('/api/metas-financeiras', (req, res) => {
+app.post('/api/metas-financeiras', requireAuth, (req: any, res) => {
   const { tipo, categoria, valorTotal, aporteMensal, variacaoAnual, valorFinalMeta, tiposAtivos, mediaProventosDesejada } = req.body;
   const r = db.prepare(
-    `INSERT INTO metas_financeiras (tipo,categoria,valorTotal,aporteMensal,variacaoAnual,valorFinalMeta,tiposAtivos,mediaProventosDesejada)
-     VALUES (?,?,?,?,?,?,?,?)`
+    `INSERT INTO metas_financeiras (usuario_id,tipo,categoria,valorTotal,aporteMensal,variacaoAnual,valorFinalMeta,tiposAtivos,mediaProventosDesejada)
+     VALUES (?,?,?,?,?,?,?,?,?)`
   ).run(
+    req.usuarioId,
     tipo,
     categoria ?? null,
     valorTotal ?? null,
@@ -763,10 +894,10 @@ app.post('/api/metas-financeiras', (req, res) => {
   res.status(201).json({ id: r.lastInsertRowid, ...req.body });
 });
 
-app.put('/api/metas-financeiras/:id', (req, res) => {
+app.put('/api/metas-financeiras/:id', requireAuth, (req: any, res) => {
   const { tipo, categoria, valorTotal, aporteMensal, variacaoAnual, valorFinalMeta, tiposAtivos, mediaProventosDesejada } = req.body;
   db.prepare(
-    `UPDATE metas_financeiras SET tipo=?,categoria=?,valorTotal=?,aporteMensal=?,variacaoAnual=?,valorFinalMeta=?,tiposAtivos=?,mediaProventosDesejada=? WHERE id=?`
+    `UPDATE metas_financeiras SET tipo=?,categoria=?,valorTotal=?,aporteMensal=?,variacaoAnual=?,valorFinalMeta=?,tiposAtivos=?,mediaProventosDesejada=? WHERE id=? AND usuario_id=?`
   ).run(
     tipo,
     categoria ?? null,
@@ -776,13 +907,14 @@ app.put('/api/metas-financeiras/:id', (req, res) => {
     valorFinalMeta ?? null,
     tiposAtivos ? JSON.stringify(tiposAtivos) : null,
     mediaProventosDesejada ?? null,
-    Number(req.params.id)
+    Number(req.params.id),
+    req.usuarioId
   );
   res.json({ id: Number(req.params.id), ...req.body });
 });
 
-app.delete('/api/metas-financeiras/:id', (req, res) => {
-  db.prepare('DELETE FROM metas_financeiras WHERE id = ?').run(Number(req.params.id));
+app.delete('/api/metas-financeiras/:id', requireAuth, (req: any, res) => {
+  db.prepare('DELETE FROM metas_financeiras WHERE id = ? AND usuario_id = ?').run(Number(req.params.id), req.usuarioId);
   res.status(204).end();
 });
 
