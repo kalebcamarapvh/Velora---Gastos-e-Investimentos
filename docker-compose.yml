@@ -1,0 +1,25 @@
+version: '3.8'
+
+services:
+  finance-dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: finance-dashboard-prod
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    environment:
+      - PORT=3001
+      # O SQLite vai procurar o banco na pasta mapeada /app/data dentro do container
+      - DB_PATH=/app/data/finance.db
+      - VITE_API_SECRET_TOKEN=${VITE_API_SECRET_TOKEN}
+      - API_SECRET_TOKEN=${API_SECRET_TOKEN}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - BRAPI_TOKEN=${BRAPI_TOKEN}
+    volumes:
+      # Mapeamos a pasta "./data" da sua maquina para "/app/data" do container.
+      # Isso garante que se o container cair, seu banco (e os arquivos temporários -wal) permanecem salvos localmente.
+      - ./data:/app/data
+    security_opt:
+      - no-new-privileges:true

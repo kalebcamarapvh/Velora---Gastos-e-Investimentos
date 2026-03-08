@@ -1,0 +1,8 @@
+node_modules
+dist
+.git
+.env*
+data
+finance.db
+finance.db-shm
+finance.db-wal
