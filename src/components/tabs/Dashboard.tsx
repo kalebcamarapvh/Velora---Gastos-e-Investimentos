@@ -66,7 +66,7 @@ const PiePrivacyTooltip = ({ active, payload, formatCurrency }: any) => {
 };
 
 export const Dashboard = () => {
-  const { dark } = useTheme();
+  const { isDark: dark } = useTheme();
 
   const today = new Date();
   const initialMonth = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`;

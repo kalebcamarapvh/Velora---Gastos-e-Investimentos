@@ -921,6 +921,52 @@ app.delete('/api/metas-financeiras/:id', requireAuth, (req: any, res) => {
   res.status(204).end();
 });
 
+// ===================== EXPORTAÇÃO DE DADOS =====================
+app.get('/api/export', requireAuth, (req: any, res) => {
+  try {
+    const data = {
+      usuarios: db.prepare('SELECT id, nome, email, moeda, fuso_horario, created_at FROM usuarios WHERE id = ?').get(req.usuarioId),
+      transacoes: db.prepare('SELECT * FROM transacoes WHERE usuario_id = ?').all(req.usuarioId),
+      metas_financeiras: db.prepare('SELECT * FROM metas_financeiras WHERE usuario_id = ?').all(req.usuarioId),
+      // Tabelas como categorias, carteira, investimentos não possuem usuario_id no schema atual.
+    };
+    res.json(data);
+  } catch (error) {
+    console.error('Erro ao exportar dados:', error);
+    res.status(500).json({ error: 'Erro interno ao exportar dados.' });
+  }
+});
+
+// ===================== EXCLUSÃO DE CONTA =====================
+app.delete('/api/account', requireAuth, (req: any, res) => {
+  const { password } = req.body;
+  if (!password) return res.status(400).json({ error: 'A senha é obrigatória para excluir a conta.' });
+
+  try {
+    const user = db.prepare('SELECT * FROM usuarios WHERE id = ?').get(req.usuarioId) as any;
+    if (!user) return res.status(404).json({ error: 'Usuário não encontrado.' });
+
+    const match = bcrypt.compareSync(password, user.password_hash);
+    if (!match) return res.status(401).json({ error: 'Senha incorreta.' });
+
+    // Excluir registros vinculados ao usuario_id no schema atual
+    db.prepare('DELETE FROM transacoes WHERE usuario_id = ?').run(req.usuarioId);
+    db.prepare('DELETE FROM metas_financeiras WHERE usuario_id = ?').run(req.usuarioId);
+
+    // Excluir o próprio usuário
+    db.prepare('DELETE FROM usuarios WHERE id = ?').run(req.usuarioId);
+
+    // Limpar os cookies da sessão
+    res.clearCookie('accessToken');
+    res.clearCookie('refreshToken');
+
+    res.json({ message: 'Conta excluída com sucesso.' });
+  } catch (error) {
+    console.error('Erro ao excluir conta:', error);
+    res.status(500).json({ error: 'Ocorreu um erro ao excluir a conta.' });
+  }
+});
+
 // ===================== SPA FALLBACK =====================
 app.get('*', (req, res) => {
   if (!req.path.startsWith('/api')) {

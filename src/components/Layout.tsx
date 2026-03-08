@@ -32,7 +32,7 @@ interface LayoutProps {
 
 export const Layout: React.FC<LayoutProps> = ({ children, activeTab, setActiveTab }) => {
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
-  const { dark, toggle } = useTheme();
+  const { isDark: dark, toggle } = useTheme();
   const { hidden, togglePrivacy } = usePrivacy();
 
   const menuItems = [

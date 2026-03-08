@@ -14,14 +14,20 @@ import React, { createContext, useContext, useState, useEffect, useCallback, use
    ═══════════════════════════════════════════════════════════════ */
 export const THEME_TRANSITION_MS = 1200;
 
+export type ThemeType = 'light' | 'dark' | 'system';
+
 interface ThemeContextType {
-    dark: boolean;
+    theme: ThemeType;
+    isDark: boolean;
+    setTheme: (newTheme: ThemeType, e?: React.MouseEvent) => void;
     toggle: (e?: React.MouseEvent) => void;
     transitionMs: number;
 }
 
 const ThemeContext = createContext<ThemeContextType>({
-    dark: false,
+    theme: 'dark',
+    isDark: true,
+    setTheme: () => { },
     toggle: () => { },
     transitionMs: THEME_TRANSITION_MS,
 });
@@ -29,31 +35,71 @@ const ThemeContext = createContext<ThemeContextType>({
 export const useTheme = () => useContext(ThemeContext);
 
 export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-    const [dark, setDark] = useState(() => {
+    const [theme, setThemeState] = useState<ThemeType>(() => {
         if (typeof window !== 'undefined') {
-            const saved = localStorage.getItem('velora-theme');
-            if (saved) return saved === 'dark';
-            return window.matchMedia('(prefers-color-scheme: dark)').matches;
+            const saved = localStorage.getItem('velora-theme-pref') as ThemeType;
+            if (saved && ['light', 'dark', 'system'].includes(saved)) return saved;
         }
-        return false;
+        return 'system';
     });
 
+    const [isDark, setIsDark] = useState(false);
     const isAnimating = useRef(false);
 
-    // Apply class on initial load (no animation)
+    // Compute active darkness and apply classes
     useEffect(() => {
         const root = document.documentElement;
-        if (dark) root.classList.add('dark');
-        else root.classList.remove('dark');
-        localStorage.setItem('velora-theme', dark ? 'dark' : 'light');
-    }, [dark]);
+        let shouldBeDark = false;
 
-    const toggle = useCallback((e?: React.MouseEvent) => {
-        if (isAnimating.current) return;
+        if (theme === 'system') {
+            shouldBeDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+        } else {
+            shouldBeDark = theme === 'dark';
+        }
+
+        if (shouldBeDark !== isDark) {
+            if (shouldBeDark) root.classList.add('dark');
+            else root.classList.remove('dark');
+            setIsDark(shouldBeDark);
+        }
+        localStorage.setItem('velora-theme-pref', theme);
+    }, [theme, isDark]);
+
+    // Listener for system preference changes
+    useEffect(() => {
+        if (theme !== 'system') return;
+        const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+        const handleChange = (e: MediaQueryListEvent) => {
+            const root = document.documentElement;
+            if (e.matches) root.classList.add('dark');
+            else root.classList.remove('dark');
+            setIsDark(e.matches);
+        };
+        mediaQuery.addEventListener('change', handleChange);
+        return () => mediaQuery.removeEventListener('change', handleChange);
+    }, [theme]);
+
+    const setTheme = useCallback((newTheme: ThemeType, e?: React.MouseEvent) => {
+        if (isAnimating.current || newTheme === theme) return;
+
+        // Calculate if actual visual mode will change
+        const currentIsDark = isDark;
+        let nextIsDark = false;
+        if (newTheme === 'system') {
+            nextIsDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+        } else {
+            nextIsDark = newTheme === 'dark';
+        }
+
+        // If no visual change, just set state
+        if (currentIsDark === nextIsDark || !e || typeof document === 'undefined' || !('startViewTransition' in document)) {
+            setThemeState(newTheme);
+            return;
+        }
 
         // Get click coordinates for the radial origin
-        const x = e ? e.clientX : window.innerWidth - 80;
-        const y = e ? e.clientY : 32;
+        const x = e.clientX;
+        const y = e.clientY;
 
         // Calculate the maximum radius needed to cover the full screen
         const maxRadius = Math.hypot(
@@ -61,38 +107,34 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             Math.max(y, window.innerHeight - y),
         );
 
-        // Check if View Transitions API is available
-        if (typeof document !== 'undefined' && 'startViewTransition' in document) {
-            isAnimating.current = true;
+        isAnimating.current = true;
 
-            // Set CSS custom properties for the animation
-            document.documentElement.style.setProperty('--theme-x', `${x}px`);
-            document.documentElement.style.setProperty('--theme-y', `${y}px`);
-            document.documentElement.style.setProperty('--theme-radius', `${maxRadius}px`);
-            document.documentElement.style.setProperty('--theme-transition-ms', `${THEME_TRANSITION_MS}ms`);
+        // Set CSS custom properties for the animation
+        document.documentElement.style.setProperty('--theme-x', `${x}px`);
+        document.documentElement.style.setProperty('--theme-y', `${y}px`);
+        document.documentElement.style.setProperty('--theme-radius', `${maxRadius}px`);
+        document.documentElement.style.setProperty('--theme-transition-ms', `${THEME_TRANSITION_MS}ms`);
 
-            const transition = (document as any).startViewTransition(() => {
-                setDark(d => {
-                    const next = !d;
-                    const root = document.documentElement;
-                    if (next) root.classList.add('dark');
-                    else root.classList.remove('dark');
-                    localStorage.setItem('velora-theme', next ? 'dark' : 'light');
-                    return next;
-                });
-            });
+        const transition = (document as any).startViewTransition(() => {
+            setThemeState(newTheme);
+            const root = document.documentElement;
+            if (nextIsDark) root.classList.add('dark');
+            else root.classList.remove('dark');
+            setIsDark(nextIsDark);
+        });
 
-            transition.finished.then(() => {
-                isAnimating.current = false;
-            });
-        } else {
-            // Fallback: instant toggle if View Transitions not supported
-            setDark(d => !d);
-        }
-    }, []);
+        transition.finished.then(() => {
+            isAnimating.current = false;
+        });
+    }, [theme, isDark]);
+
+    const toggle = useCallback((e?: React.MouseEvent) => {
+        const nextTheme = isDark ? 'light' : 'dark';
+        setTheme(nextTheme, e);
+    }, [isDark, setTheme]);
 
     return (
-        <ThemeContext.Provider value={{ dark, toggle, transitionMs: THEME_TRANSITION_MS }}>
+        <ThemeContext.Provider value={{ theme, isDark, setTheme, toggle, transitionMs: THEME_TRANSITION_MS }}>
             {children}
         </ThemeContext.Provider>
     );

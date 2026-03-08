@@ -24,7 +24,10 @@ import { Configuracoes } from './components/tabs/Configuracoes';
 import { Auth } from './components/Auth';
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState('dashboard');
+  const [activeTab, setActiveTab] = useState(() => {
+    if (typeof window !== 'undefined') return localStorage.getItem('velora-start-tab') || 'dashboard';
+    return 'dashboard';
+  });
   const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
 
   useEffect(() => {
