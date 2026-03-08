@@ -329,14 +329,14 @@ app.post('/api/logout', (req, res) => {
 });
 
 app.get('/api/me', requireAuth, (req: any, res) => {
-  const user = db.prepare('SELECT id, username, is_admin FROM usuarios WHERE id = ?').get(req.usuarioId) as any;
+  const user = db.prepare('SELECT id, username, is_admin, role FROM usuarios WHERE id = ?').get(req.usuarioId) as any;
   if (!user) return res.status(404).json({ error: 'Usuário não encontrado.' });
-  res.json({ id: user.id, username: user.username, isAdmin: user.is_admin === 1 || user.id === 1 });
+  res.json({ id: user.id, username: user.username, isAdmin: user.is_admin === 1 || user.role === 'admin' || user.id === 1 });
 });
 
 app.get('/api/admin/stats', requireAuth, (req: any, res) => {
-  const user = db.prepare('SELECT id, is_admin FROM usuarios WHERE id = ?').get(req.usuarioId) as any;
-  if (!user || (user.is_admin !== 1 && user.id !== 1)) {
+  const user = db.prepare('SELECT id, is_admin, role FROM usuarios WHERE id = ?').get(req.usuarioId) as any;
+  if (!user || (user.is_admin !== 1 && user.role !== 'admin' && user.id !== 1)) {
     return res.status(403).json({ error: 'Acesso negado. Apenas administradores.' });
   }
 
@@ -404,8 +404,8 @@ app.get('/api/admin/stats', requireAuth, (req: any, res) => {
 });
 
 app.delete('/api/admin/logs/clear', requireAuth, (req: any, res) => {
-  const user = db.prepare('SELECT id, is_admin FROM usuarios WHERE id = ?').get(req.usuarioId) as any;
-  if (!user || (user.is_admin !== 1 && user.id !== 1)) {
+  const user = db.prepare('SELECT id, is_admin, role FROM usuarios WHERE id = ?').get(req.usuarioId) as any;
+  if (!user || (user.is_admin !== 1 && user.role !== 'admin' && user.id !== 1)) {
     return res.status(403).json({ error: 'Acesso negado. Apenas administradores.' });
   }
 

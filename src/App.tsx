@@ -21,37 +21,46 @@ import { Simulador } from './components/tabs/Simulador';
 import { Assinaturas } from './components/tabs/Assinaturas';
 import { Dividas } from './components/tabs/Dividas';
 import { Configuracoes } from './components/tabs/Configuracoes';
-import { Auth } from './components/Auth';
 import { Admin } from './components/tabs/Admin';
+import { Auth } from './components/Auth';
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState(() => {
-    if (typeof window !== 'undefined') return localStorage.getItem('velora-start-tab') || 'dashboard';
-    return 'dashboard';
-  });
+  const [activeTab, setActiveTab] = useState('dashboard');
   const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
 
   useEffect(() => {
-    // Validate session seamlessly silently
-    fetch('/api/refresh', { method: 'POST', credentials: 'include' })
-      .then(res => setIsAuthenticated(res.ok))
+    fetch('/api/me', { credentials: 'include' })
+      .then(async res => {
+        if (res.ok) {
+          const data = await res.json();
+          setIsAuthenticated(true);
+          setIsAdmin(data.isAdmin);
+        } else {
+          setIsAuthenticated(false);
+        }
+      })
       .catch(() => setIsAuthenticated(false));
 
-    // Global listener for Unauth (401 from interceptor)
-    const handleLogout = () => setIsAuthenticated(false);
+    const handleLogout = () => {
+      setIsAuthenticated(false);
+      setIsAdmin(false);
+    };
     window.addEventListener('auth-unauthorized', handleLogout);
     return () => window.removeEventListener('auth-unauthorized', handleLogout);
   }, []);
 
-  // When user logs in, ensure we respect their saved start tab preference
-  useEffect(() => {
-    if (isAuthenticated) {
-      const savedTab = localStorage.getItem('velora-start-tab');
-      if (savedTab) {
-        setActiveTab(savedTab);
-      }
-    }
-  }, [isAuthenticated]);
+  const handleLogin = () => {
+    fetch('/api/me', { credentials: 'include' })
+      .then(async res => {
+        if (res.ok) {
+          const data = await res.json();
+          setIsAdmin(data.isAdmin);
+        }
+      })
+      .catch(() => { });
+    setIsAuthenticated(true);
+  };
 
   const renderTab = () => {
     switch (activeTab) {
@@ -69,28 +78,30 @@ export default function App() {
       case 'assinaturas': return <Assinaturas />;
       case 'dividas': return <Dividas />;
       case 'configuracoes': return <Configuracoes />;
-      case 'admin': return <Admin />;
+      case 'admin': return isAdmin ? <Admin /> : <Dashboard />;
       default: return <Dashboard />;
     }
   };
 
   if (isAuthenticated === null) {
-    return <div className="min-h-screen bg-[#121212] flex items-center justify-center text-gray-500">Validando sessão segura...</div>;
+    return (
+      <div className="min-h-screen bg-[#121212] flex items-center justify-center text-gray-500">
+        Validando sessão segura...
+      </div>
+    );
   }
 
   if (!isAuthenticated) {
-    return <Auth onLogin={() => setIsAuthenticated(true)} />;
+    return <Auth onLogin={handleLogin} />;
   }
 
   return (
     <ThemeProvider>
       <PrivacyProvider>
-        <Layout activeTab={activeTab} setActiveTab={setActiveTab}>
+        <Layout activeTab={activeTab} setActiveTab={setActiveTab} isAdmin={isAdmin}>
           {renderTab()}
         </Layout>
       </PrivacyProvider>
     </ThemeProvider>
   );
-
 }
-
