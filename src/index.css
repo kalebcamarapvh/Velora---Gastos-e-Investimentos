@@ -348,6 +348,21 @@ body {
 }
 
 /* ══════════════════════════════════════════════════════════════
+   FORM EXTRAS — Number Input Spinners
+   ══════════════════════════════════════════════════════════════ */
+
+/* Remove arrows/spinners from number inputs */
+input[type="number"]::-webkit-outer-spin-button,
+input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+input[type="number"] {
+  -moz-appearance: textfield; /* Firefox */
+}
+
+/* ══════════════════════════════════════════════════════════════
    PRIVACY MODE — Blur monetary values when .values-hidden
    Uses .privacy-blur class on value spans only, not entire tooltip.
    ══════════════════════════════════════════════════════════════ */
