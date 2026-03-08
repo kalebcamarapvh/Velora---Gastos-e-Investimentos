@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Lock, User, LogIn, UserPlus, AlertCircle } from 'lucide-react';
+import { Lock, User, LogIn, UserPlus, AlertCircle, Eye, EyeOff } from 'lucide-react';
 
 interface AuthProps {
     onLogin: () => void;
@@ -11,6 +11,7 @@ export function Auth({ onLogin }: AuthProps) {
     const [password, setPassword] = useState('');
     const [error, setError] = useState('');
     const [loading, setLoading] = useState(false);
+    const [showPassword, setShowPassword] = useState(false);
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -95,13 +96,24 @@ export function Auth({ onLogin }: AuthProps) {
                                     <Lock className="h-5 w-5 text-gray-500" />
                                 </div>
                                 <input
-                                    type="password"
+                                    type={showPassword ? "text" : "password"}
                                     required
                                     value={password}
                                     onChange={(e) => setPassword(e.target.value)}
-                                    className="bg-[#252525] border border-gray-700 text-white text-sm rounded-lg focus:ring-violet-500 focus:border-violet-500 block w-full pl-10 p-2.5 outline-none transition-colors placeholder-gray-500"
+                                    className="bg-[#252525] border border-gray-700 text-white text-sm rounded-lg focus:ring-violet-500 focus:border-violet-500 block w-full pl-10 pr-10 p-2.5 outline-none transition-colors placeholder-gray-500"
                                     placeholder="••••••••"
                                 />
+                                <button
+                                    type="button"
+                                    onClick={() => setShowPassword(!showPassword)}
+                                    className="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-500 hover:text-gray-300 transition-colors"
+                                >
+                                    {showPassword ? (
+                                        <EyeOff className="h-5 w-5" />
+                                    ) : (
+                                        <Eye className="h-5 w-5" />
+                                    )}
+                                </button>
                             </div>
                         </div>
 

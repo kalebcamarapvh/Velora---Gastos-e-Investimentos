@@ -31,7 +31,7 @@ const REFRESH_SECRET = process.env.API_SECRET_TOKEN || 'fallback-secret-123'; //
 // --- GLOBAL API RATE LIMITING ---
 app.use('/api/', rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 200,
+  max: 1000, // Increased to 1000 to prevent locking out legitimate rapid tab switching
   message: { error: 'Muitas requisições. Tente novamente mais tarde.' }
 }));
 
@@ -46,12 +46,7 @@ app.use((_req, res, next) => {
   next();
 });
 
-app.use((_req, res, next) => {
-  res.header('Access-Control-Allow-Origin', '*');
-  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-  next();
-});
+
 
 // ===================== DATABASE SETUP =====================
 const dbPath = process.env.DB_PATH || path.join(__dirname, 'finance.db');
