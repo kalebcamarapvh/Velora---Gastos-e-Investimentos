@@ -15,6 +15,10 @@ export const Configuracoes = () => {
 
   // Modal States
   const [showImportModal, setShowImportModal] = useState(false);
+  const [importFile, setImportFile] = useState<File | null>(null);
+  const [importError, setImportError] = useState('');
+  const [isImporting, setIsImporting] = useState(false);
+
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [isResetMode, setIsResetMode] = useState(false); // New state to differentiate Reset vs Delete
   const [deletePassword, setDeletePassword] = useState('');
@@ -59,25 +63,81 @@ export const Configuracoes = () => {
     }
   };
 
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files[0]) {
+      setImportFile(e.target.files[0]);
+      setImportError('');
+    }
+  };
+
+  const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+      setImportFile(e.dataTransfer.files[0]);
+      setImportError('');
+    }
+  };
+
+  const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+  };
+
+  const handleImportData = async () => {
+    if (!importFile) return;
+    setIsImporting(true);
+    setImportError('');
+    try {
+      const text = await importFile.text();
+      const jsonData = JSON.parse(text);
+
+      const res = await fetch('/api/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(jsonData)
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        setImportError(err.error || 'Erro ao importar dados.');
+        setIsImporting(false);
+        return;
+      }
+      setShowImportModal(false);
+      setIsImporting(false);
+      setImportFile(null);
+      window.location.reload(); // Reload to refresh contexts with newly imported data
+    } catch (e) {
+      setImportError('Arquivo JSON inválido ou erro de conexão.');
+      setIsImporting(false);
+    }
+  };
+
   const handleDeleteAccount = async () => {
     if (!deletePassword) return;
     setIsDeleting(true);
     setDeleteError('');
     try {
-      const res = await fetch('/api/account', {
+      const endpoint = isResetMode ? '/api/account/reset' : '/api/account';
+      const res = await fetch(endpoint, {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ password: deletePassword })
       });
       if (!res.ok) {
         const err = await res.json();
-        setDeleteError(err.error || 'Erro ao excluir conta.');
+        setDeleteError(err.error || 'Erro ao processar solicitação.');
         setIsDeleting(false);
         return;
       }
-      window.dispatchEvent(new Event('auth-unauthorized'));
+      if (isResetMode) {
+        setShowDeleteModal(false);
+        setIsDeleting(false);
+        window.location.reload();
+      } else {
+        window.dispatchEvent(new Event('auth-unauthorized'));
+      }
     } catch (e) {
-      setDeleteError('Erro de conexão ao excluir conta.');
+      setDeleteError('Erro de conexão com o servidor.');
       setIsDeleting(false);
     }
   };
@@ -231,8 +291,8 @@ export const Configuracoes = () => {
                 <h3 className="text-base font-bold text-red-800 dark:text-red-400 mb-2">Zona de Perigo</h3>
                 <p className="text-sm text-red-600 dark:text-red-300/80 mb-4 border-b border-red-200 dark:border-red-900/50 pb-4">Estas ações são destrutivas e irreversíveis. Tenha certeza do que está fazendo.</p>
                 <div className="flex gap-4">
-                  <button className="px-4 py-2 bg-transparent border border-red-400 dark:border-red-800 text-red-700 dark:text-red-400 rounded-lg hover:bg-red-100 dark:hover:bg-red-900/30 transition-colors text-sm font-medium">Zerar Conta</button>
-                  <button onClick={() => setShowDeleteModal(true)} className="px-4 py-2 bg-red-600 border border-red-500 text-white rounded-lg hover:bg-red-700 transition-colors text-sm font-medium shadow-sm">Excluir Conta</button>
+                  <button onClick={() => openDeleteModal(true)} className="px-4 py-2 bg-transparent border border-red-400 dark:border-red-800 text-red-700 dark:text-red-400 rounded-lg hover:bg-red-100 dark:hover:bg-red-900/30 transition-colors text-sm font-medium">Zerar Conta</button>
+                  <button onClick={() => openDeleteModal(false)} className="px-4 py-2 bg-red-600 border border-red-500 text-white rounded-lg hover:bg-red-700 transition-colors text-sm font-medium shadow-sm">Excluir Conta</button>
                 </div>
               </div>
             </div>
@@ -379,7 +439,7 @@ export const Configuracoes = () => {
           <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setShowImportModal(false)}></div>
 
           <div className="relative w-full max-w-lg bg-[#212121] text-gray-200 rounded-3xl shadow-2xl p-10 flex flex-col items-center text-center animate-in slide-in-from-bottom-10 fade-in duration-300">
-            <button onClick={() => setShowImportModal(false)} className="absolute top-4 right-4 p-2 text-gray-400 hover:text-white transition-colors">
+            <button onClick={() => { setShowImportModal(false); setImportFile(null); setImportError(''); }} className="absolute top-4 right-4 p-2 text-gray-400 hover:text-white transition-colors">
               <X className="w-6 h-6" />
             </button>
 
@@ -395,14 +455,50 @@ export const Configuracoes = () => {
               </div>
             </div>
 
-            <h2 className="text-2xl font-bold text-white mb-2 tracking-tight">Add anything</h2>
-            <p className="text-gray-400 mb-8 font-medium">Drop any file here to add it to the conversation</p>
+            <h2 className="text-2xl font-bold text-white mb-2 tracking-tight">Importar Dados</h2>
+            <p className="text-gray-400 mb-8 font-medium">Faça o upload do seu arquivo de backup (.json) gerado anteriormente.</p>
 
-            {/* Minimal dotted drop area */}
-            <div className="w-full h-32 border-2 border-dashed border-gray-600 rounded-2xl flex items-center justify-center hover:border-violet-500 hover:bg-violet-500/10 cursor-pointer transition-all">
-              <span className="text-gray-300 font-medium">Select a file from your computer</span>
-            </div>
-            <p className="mt-4 text-xs text-gray-500">Supported formats: .csv, .xlsx, .json</p>
+            {importError && (
+              <div className="mb-6 px-4 py-2 w-full bg-red-500/10 text-red-400 border border-red-500/20 rounded-lg text-sm">
+                {importError}
+              </div>
+            )}
+
+            {!importFile ? (
+              <>
+                <div
+                  onDrop={handleDrop}
+                  onDragOver={handleDragOver}
+                  className="w-full h-32 border-2 border-dashed border-gray-600 rounded-2xl flex flex-col items-center justify-center hover:border-violet-500 hover:bg-violet-500/10 transition-all relative"
+                >
+                  <input
+                    type="file"
+                    accept=".json"
+                    onChange={handleFileChange}
+                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                  />
+                  <span className="text-gray-300 font-medium">Selecione ou solte aqui</span>
+                  <span className="text-gray-500 text-xs mt-1">Apenas arquivos .json suportados</span>
+                </div>
+              </>
+            ) : (
+              <div className="w-full space-y-4">
+                <div className="w-full flex items-center justify-between p-4 bg-[#2a2a2a] rounded-xl border border-gray-700">
+                  <div className="flex items-center gap-3">
+                    <Database className="w-5 h-5 text-violet-400" />
+                    <span className="text-sm font-medium text-gray-200 truncate max-w-[200px]">{importFile.name}</span>
+                  </div>
+                  <button onClick={() => setImportFile(null)} className="text-red-400 hover:text-red-300 text-sm font-medium transition-colors">Remover</button>
+                </div>
+                <button
+                  onClick={handleImportData}
+                  disabled={isImporting}
+                  className="w-full py-3 bg-violet-600 text-white rounded-xl font-medium hover:bg-violet-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-sm"
+                >
+                  {isImporting ? 'Importando...' : 'Confirmar Importação'}
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -427,12 +523,14 @@ export const Configuracoes = () => {
                 <AlertTriangle className="w-6 h-6 text-red-600 dark:text-red-500" />
               </div>
               <div>
-                <h3 className="text-lg font-bold text-gray-900 dark:text-white">Excluir sua conta</h3>
+                <h3 className="text-lg font-bold text-gray-900 dark:text-white">
+                  {isResetMode ? 'Zerar seus dados' : 'Excluir sua conta'}
+                </h3>
               </div>
             </div>
 
             <p className="text-sm text-gray-600 dark:text-gray-400 mb-6 leading-relaxed">
-              Você tem certeza absoluta? Isso excluirá permanentemente seus dados financeiros, transações e assinaturas. <strong className="text-gray-900 dark:text-gray-200">Esta ação não pode ser desfeita.</strong>
+              Você tem certeza absoluta? Isso {isResetMode ? 'limpará todo o seu histórico financeiro e transações.' : 'excluirá permanentemente seus dados financeiros e sua conta de acesso.'} <strong className="text-gray-900 dark:text-gray-200">Esta ação não pode ser desfeita.</strong>
             </p>
 
             {deleteError && (
@@ -467,7 +565,7 @@ export const Configuracoes = () => {
                   disabled={!deletePassword || isDeleting}
                   className="px-4 py-2 bg-red-600 hover:bg-red-700 disabled:bg-red-400 dark:disabled:bg-red-800 disabled:cursor-not-allowed text-white rounded-lg transition-colors text-sm font-medium shadow-sm flex items-center gap-2"
                 >
-                  {isDeleting ? 'Excluindo...' : 'Sim, excluir minha conta'}
+                  {isDeleting ? 'Processando...' : (isResetMode ? 'Sim, zerar dados' : 'Sim, excluir minha conta')}
                 </button>
               </div>
             </div>

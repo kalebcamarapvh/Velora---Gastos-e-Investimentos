@@ -14,8 +14,9 @@ window.fetch = async (...args) => {
     const response = await originalFetch(resource, newConfig);
 
     // Auto-logout visual feedback and state reset on 401
-    // Ignore /api/login and /api/refresh 401s
-    if (response.status === 401 && !url.includes('/api/login') && !url.includes('/api/refresh')) {
+    // Auto-logout visual feedback and state reset on 401
+    // Ignore /api/login, /api/refresh and /api/account 401s (which might just be wrong password checks)
+    if (response.status === 401 && !url.includes('/api/login') && !url.includes('/api/refresh') && !url.includes('/api/account')) {
       window.dispatchEvent(new Event('auth-unauthorized'));
     }
     return response;

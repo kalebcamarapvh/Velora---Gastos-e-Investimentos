@@ -13,6 +13,7 @@ import crypto from 'crypto';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
+app.set('trust proxy', 1); // Crucial for Vite proxy/nginx so req.ip is correct and rate limiter doesn't block everyone
 
 // --- SECURE HEADERS (HELMET) ---
 app.use(helmet({
@@ -213,7 +214,7 @@ const authSchema = z.object({
 
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 5,
+  max: 50, // Increased tolerance due to proxy/testing
   message: { error: 'Muitas tentativas de login. Sua conta foi temporariamente bloqueada. Tente novamente em 15 minutos.' },
   handler: (req, res, next, options) => {
     console.warn(`[RATE LIMIT LOGIN] ALERTA DE SEGURANÇA: IP Bloqueado por Força Bruta: ${req.ip} - Tentativas excedidas no /api/login`);
@@ -925,15 +926,63 @@ app.delete('/api/metas-financeiras/:id', requireAuth, (req: any, res) => {
 app.get('/api/export', requireAuth, (req: any, res) => {
   try {
     const data = {
-      usuarios: db.prepare('SELECT id, nome, email, moeda, fuso_horario, created_at FROM usuarios WHERE id = ?').get(req.usuarioId),
-      transacoes: db.prepare('SELECT * FROM transacoes WHERE usuario_id = ?').all(req.usuarioId),
+      gastos: db.prepare('SELECT * FROM gastos WHERE usuario_id = ?').all(req.usuarioId),
+      receitas: db.prepare('SELECT * FROM receitas WHERE usuario_id = ?').all(req.usuarioId),
+      assinaturas: db.prepare('SELECT * FROM assinaturas WHERE usuario_id = ?').all(req.usuarioId),
+      dividas: db.prepare('SELECT * FROM dividas WHERE usuario_id = ?').all(req.usuarioId),
+      metas_planejamento: db.prepare('SELECT * FROM metas_planejamento WHERE usuario_id = ?').all(req.usuarioId),
+      carteira: db.prepare('SELECT * FROM carteira WHERE usuario_id = ?').all(req.usuarioId),
+      lancamentos_investimentos: db.prepare('SELECT * FROM lancamentos_investimentos WHERE usuario_id = ?').all(req.usuarioId),
       metas_financeiras: db.prepare('SELECT * FROM metas_financeiras WHERE usuario_id = ?').all(req.usuarioId),
-      // Tabelas como categorias, carteira, investimentos não possuem usuario_id no schema atual.
     };
     res.json(data);
   } catch (error) {
     console.error('Erro ao exportar dados:', error);
     res.status(500).json({ error: 'Erro interno ao exportar dados.' });
+  }
+});
+
+// ===================== IMPORTAÇÃO DE DADOS =====================
+app.post('/api/import', requireAuth, (req: any, res) => {
+  const data = req.body;
+  if (!data || typeof data !== 'object') {
+    return res.status(400).json({ error: 'Formato de dados JSON inválido.' });
+  }
+
+  try {
+    const importTransaction = db.transaction(() => {
+      // 1. Limpar os dados atuais para evitar duplicidade ou conflitos
+      const tables = ['gastos', 'receitas', 'assinaturas', 'dividas', 'metas_planejamento', 'carteira', 'lancamentos_investimentos', 'metas_financeiras'];
+      for (const table of tables) {
+        db.prepare(`DELETE FROM ${table} WHERE usuario_id = ?`).run(req.usuarioId);
+      }
+
+      // 2. Inserir Gastos
+      if (Array.isArray(data.gastos)) {
+        const stmt = db.prepare(`INSERT INTO gastos (usuario_id, data, descricao, categoria, subcategoria, pagamento, conta, valor) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`);
+        for (const t of data.gastos) stmt.run(req.usuarioId, t.data, t.descricao, t.categoria, t.subcategoria, t.pagamento, t.conta, t.valor);
+      }
+
+      // 3. Inserir Receitas
+      if (Array.isArray(data.receitas)) {
+        const stmt = db.prepare(`INSERT INTO receitas (usuario_id, data, descricao, categoria, origem, conta, valor) VALUES (?, ?, ?, ?, ?, ?, ?)`);
+        for (const t of data.receitas) stmt.run(req.usuarioId, t.data, t.descricao, t.categoria, t.origem, t.conta, t.valor);
+      }
+
+      // 4. Inserir Metas Financeiras
+      if (Array.isArray(data.metas_financeiras)) {
+        const stmt = db.prepare(`INSERT INTO metas_financeiras (usuario_id, tipo, categoria, valorTotal, aporteMensal, variacaoAnual, valorFinalMeta, tiposAtivos, mediaProventosDesejada) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+        for (const m of data.metas_financeiras) stmt.run(req.usuarioId, m.tipo, m.categoria, m.valorTotal, m.aporteMensal, m.variacaoAnual, m.valorFinalMeta, m.tiposAtivos, m.mediaProventosDesejada);
+      }
+
+      // Outras tabelas podem ser inseridas aqui de forma similar se necessário
+    });
+
+    importTransaction();
+    res.json({ message: 'Dados importados com sucesso.' });
+  } catch (error) {
+    console.error('Erro ao importar dados:', error);
+    res.status(500).json({ error: 'Falha ao restaurar o backup.' });
   }
 });
 
@@ -950,8 +999,10 @@ app.delete('/api/account', requireAuth, (req: any, res) => {
     if (!match) return res.status(401).json({ error: 'Senha incorreta.' });
 
     // Excluir registros vinculados ao usuario_id no schema atual
-    db.prepare('DELETE FROM transacoes WHERE usuario_id = ?').run(req.usuarioId);
-    db.prepare('DELETE FROM metas_financeiras WHERE usuario_id = ?').run(req.usuarioId);
+    const tables = ['gastos', 'receitas', 'assinaturas', 'dividas', 'metas_planejamento', 'carteira', 'lancamentos_investimentos', 'metas_financeiras'];
+    for (const table of tables) {
+      db.prepare(`DELETE FROM ${table} WHERE usuario_id = ?`).run(req.usuarioId);
+    }
 
     // Excluir o próprio usuário
     db.prepare('DELETE FROM usuarios WHERE id = ?').run(req.usuarioId);
@@ -964,6 +1015,36 @@ app.delete('/api/account', requireAuth, (req: any, res) => {
   } catch (error) {
     console.error('Erro ao excluir conta:', error);
     res.status(500).json({ error: 'Ocorreu um erro ao excluir a conta.' });
+  }
+});
+
+// ===================== ZERAR DADOS DA CONTA =====================
+app.delete('/api/account/reset', requireAuth, (req: any, res) => {
+  const { password } = req.body;
+  if (!password) return res.status(400).json({ error: 'A senha é obrigatória para zerar a conta.' });
+
+  try {
+    const user = db.prepare('SELECT * FROM usuarios WHERE id = ?').get(req.usuarioId) as any;
+    if (!user) return res.status(404).json({ error: 'Usuário não encontrado.' });
+
+    const match = bcrypt.compareSync(password, user.password_hash);
+    if (!match) return res.status(401).json({ error: 'Senha incorreta.' });
+
+    // Excluir registros vinculados ao usuario_id no schema atual
+    const tables = ['gastos', 'receitas', 'assinaturas', 'dividas', 'metas_planejamento', 'carteira', 'lancamentos_investimentos', 'metas_financeiras'];
+
+    const resetTransaction = db.transaction(() => {
+      for (const table of tables) {
+        db.prepare(`DELETE FROM ${table} WHERE usuario_id = ?`).run(req.usuarioId);
+      }
+    });
+
+    resetTransaction();
+
+    res.json({ message: 'Dados da conta zerados com sucesso.' });
+  } catch (error) {
+    console.error('Erro ao zerar conta:', error);
+    res.status(500).json({ error: 'Ocorreu um erro ao zerar os dados da conta.' });
   }
 });
 

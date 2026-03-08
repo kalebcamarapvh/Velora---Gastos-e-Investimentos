@@ -42,6 +42,16 @@ export default function App() {
     return () => window.removeEventListener('auth-unauthorized', handleLogout);
   }, []);
 
+  // When user logs in, ensure we respect their saved start tab preference
+  useEffect(() => {
+    if (isAuthenticated) {
+      const savedTab = localStorage.getItem('velora-start-tab');
+      if (savedTab) {
+        setActiveTab(savedTab);
+      }
+    }
+  }, [isAuthenticated]);
+
   const renderTab = () => {
     switch (activeTab) {
       case 'dashboard': return <Dashboard />;
