@@ -12,3 +12,4 @@ coverage/
 finance.db
 finance.db-shm
 finance.db-wal
+finance.db-wal
