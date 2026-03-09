@@ -3,9 +3,7 @@ import { Plus, Filter, Download, X, ChevronDown, FileText, FileSpreadsheet, Tras
 import * as XLSX from 'xlsx';
 import { Modal } from '../Modal';
 import { CurrencyInput } from '../CurrencyInput';
-import { getGastos, createGasto, deleteGasto, type Gasto } from '../../services/api';
-
-const CATEGORIAS_GASTO = ['Moradia', 'Alimentação', 'Transporte', 'Lazer', 'Saúde', 'Educação', 'Outros'];
+import { getGastos, createGasto, deleteGasto, getContas, type Gasto, type Conta, getCategoriasGastos, type CategoriaGasto } from '../../services/api';
 const PAGAMENTOS = ['Pix', 'Cartão de Crédito', 'Cartão de Débito', 'Dinheiro', 'Boleto', 'Transferência'];
 
 type OrdemData = 'recente' | 'antigo';
@@ -29,7 +27,7 @@ const filtrosIniciais: Filtros = {
 const emptyForm = {
   data: new Date().toISOString().slice(0, 10),
   descricao: '',
-  categoria: CATEGORIAS_GASTO[0],
+  categoria: '',
   subcategoria: '',
   pagamento: PAGAMENTOS[0],
   conta: '',
@@ -38,6 +36,9 @@ const emptyForm = {
 
 export const Gastos = () => {
   const [gastos, setGastos] = useState<Gasto[]>([]);
+  const [contasCadastradas, setContasCadastradas] = useState<Conta[]>([]);
+  const [categoriasCadastradas, setCategoriasCadastradas] = useState<CategoriaGasto[]>([]);
+
   const [showModal, setShowModal] = useState(false);
   const [showFiltros, setShowFiltros] = useState(false);
   const [showExportMenu, setShowExportMenu] = useState(false);
@@ -49,17 +50,31 @@ export const Gastos = () => {
   const formatCurrency = (value: number) =>
     new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value);
 
-  const load = () => getGastos().then(setGastos).catch(console.error);
+  const load = () => {
+    getGastos().then(setGastos).catch(console.error);
+    getContas().then(setContasCadastradas).catch(console.error);
+    getCategoriasGastos().then(setCategoriasCadastradas).catch(console.error);
+  };
   useEffect(() => { load(); }, []);
+
+  useEffect(() => {
+    if (categoriasCadastradas.length > 0 && form.categoria === '') {
+      setForm(f => ({ ...f, categoria: categoriasCadastradas[0].nome }));
+    }
+  }, [categoriasCadastradas, showModal]);
 
   // ---------- derived: unique categories & accounts ----------
   const categoriasDisponiveis = useMemo(() =>
     ['', ...Array.from(new Set(gastos.map(g => g.categoria))).sort()],
     [gastos]);
 
-  const contasDisponiveis = useMemo(() =>
-    ['', ...Array.from(new Set(gastos.map(g => g.conta).filter(Boolean))).sort()],
-    [gastos]);
+  const contasDisponiveis = useMemo(() => {
+    const all = [
+      ...contasCadastradas.map(c => c.nome),
+      ...gastos.map(g => g.conta).filter(Boolean)
+    ];
+    return ['', ...Array.from(new Set(all)).sort()];
+  }, [gastos, contasCadastradas]);
 
   // ---------- apply filters ----------
   const gastosFiltrados = useMemo(() => {
@@ -392,7 +407,7 @@ export const Gastos = () => {
                 <label className="block text-xs font-semibold text-slate-600 mb-1">Categoria *</label>
                 <select name="categoria" value={form.categoria} onChange={handleChange}
                   className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-rose-400 bg-white">
-                  {CATEGORIAS_GASTO.map(c => <option key={c}>{c}</option>)}
+                  {categoriasCadastradas.map(c => <option key={c.id} value={c.nome}>{c.nome}</option>)}
                 </select>
               </div>
               <div>
@@ -410,9 +425,12 @@ export const Gastos = () => {
                 </select>
               </div>
               <div>
-                <label className="block text-xs font-semibold text-slate-600 mb-1">Conta</label>
-                <input type="text" name="conta" value={form.conta} onChange={handleChange} placeholder="Ex: Conta Corrente..."
-                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-rose-400" />
+                <label className="block text-xs font-semibold text-slate-600 mb-1">Conta (Opcional)</label>
+                <select name="conta" value={form.conta} onChange={handleChange}
+                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-rose-400">
+                  <option value="">(Selecione ou deixe em branco)</option>
+                  {contasCadastradas.map(c => <option key={c.id} value={c.nome}>{c.nome}</option>)}
+                </select>
               </div>
             </div>
             <div className="flex gap-3 pt-2">

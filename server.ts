@@ -199,6 +199,24 @@ db.exec(`
     mediaProventosDesejada REAL,
     criadoEm TEXT NOT NULL DEFAULT (datetime('now'))
   );
+
+  CREATE TABLE IF NOT EXISTS contas (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    usuario_id INTEGER NOT NULL DEFAULT 1,
+    nome TEXT NOT NULL,
+    saldoBase REAL NOT NULL DEFAULT 0,
+    criado_em TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS categorias_gastos (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    usuario_id INTEGER NOT NULL DEFAULT 1,
+    nome TEXT NOT NULL,
+    tipo TEXT NOT NULL CHECK(tipo IN ('Fixo','Variável')),
+    essencial BOOLEAN NOT NULL DEFAULT 1,
+    subcategorias TEXT,
+    criado_em TEXT NOT NULL DEFAULT (datetime('now'))
+  );
 `);
 
 // Safe migrations for columns added after initial creation
@@ -429,6 +447,99 @@ app.delete('/api/gastos/:id', requireAuth, (req: any, res) => {
   res.status(204).send();
 });
 
+// ===================== CONTAS REAIS =====================
+app.get('/api/contas', requireAuth, (req: any, res) => {
+  res.json(db.prepare('SELECT * FROM contas WHERE usuario_id = ? ORDER BY nome ASC').all(req.usuarioId));
+});
+
+app.post('/api/contas', requireAuth, (req: any, res) => {
+  const { nome, saldoBase } = req.body;
+  if (!nome) return res.status(400).json({ error: 'Nome da conta é obrigatório' });
+  const r = db.prepare(`INSERT INTO contas (usuario_id, nome, saldoBase) VALUES (?, ?, ?)`).run(req.usuarioId, nome, saldoBase || 0);
+  res.status(201).json({ id: r.lastInsertRowid, nome, saldoBase });
+});
+
+app.delete('/api/contas/:id', requireAuth, (req: any, res) => {
+  db.prepare('DELETE FROM contas WHERE id = ? AND usuario_id = ?').run(req.params.id, req.usuarioId);
+  res.status(204).send();
+});
+
+// ===================== CATEGORIAS DE GASTOS =====================
+app.get('/api/categorias-gastos', requireAuth, (req: any, res) => {
+  let rows = db.prepare('SELECT * FROM categorias_gastos WHERE usuario_id = ? ORDER BY nome ASC').all(req.usuarioId) as any[];
+
+  // Seed defaults se o usuário for novo e não tiver nenhuma categoria
+  if (rows.length === 0) {
+    const DEFAULT_CATEGORIAS = [
+      { nome: 'Moradia', subcategorias: ['Aluguel', 'Condomínio', 'Energia', 'Água', 'Internet'], tipo: 'Fixo', essencial: true },
+      { nome: 'Alimentação', subcategorias: ['Supermercado', 'Padaria', 'Açougue', 'Restaurante', 'Delivery'], tipo: 'Variável', essencial: true },
+      { nome: 'Transporte', subcategorias: ['Gasolina', 'Uber', 'Transporte Público', 'Manutenção', 'Seguro'], tipo: 'Variável', essencial: true },
+      { nome: 'Saúde', subcategorias: ['Plano de Saúde', 'Farmácia', 'Consultas', 'Exames'], tipo: 'Fixo', essencial: true },
+      { nome: 'Lazer', subcategorias: ['Cinema', 'Shows', 'Viagens', 'Hobbies'], tipo: 'Variável', essencial: false },
+      { nome: 'Educação', subcategorias: ['Faculdade', 'Cursos', 'Livros', 'Material'], tipo: 'Fixo', essencial: true },
+      { nome: 'Assinaturas', subcategorias: ['Streaming', 'Software', 'Clubes'], tipo: 'Fixo', essencial: false },
+      { nome: 'Investimentos', subcategorias: ['Ações', 'FIIs', 'Renda Fixa', 'Cripto'], tipo: 'Variável', essencial: true }
+    ];
+
+    const insert = db.prepare(`INSERT INTO categorias_gastos (usuario_id, nome, tipo, essencial, subcategorias) VALUES (?, ?, ?, ?, ?)`);
+    const insertMany = db.transaction((cats) => {
+      for (const c of cats) {
+        insert.run(req.usuarioId, c.nome, c.tipo, c.essencial ? 1 : 0, JSON.stringify(c.subcategorias));
+      }
+    });
+
+    insertMany(DEFAULT_CATEGORIAS);
+
+    // Fetch again
+    rows = db.prepare('SELECT * FROM categorias_gastos WHERE usuario_id = ? ORDER BY nome ASC').all(req.usuarioId) as any[];
+  }
+
+  const formatted = rows.map((r: any) => ({
+    id: r.id,
+    nome: r.nome,
+    tipo: r.tipo,
+    essencial: Boolean(r.essencial),
+    subcategorias: r.subcategorias ? JSON.parse(r.subcategorias) : []
+  }));
+  res.json(formatted);
+});
+
+app.post('/api/categorias-gastos', requireAuth, (req: any, res) => {
+  const { nome, tipo, essencial, subcategorias } = req.body;
+  if (!nome) return res.status(400).json({ error: 'Nome da categoria é obrigatório' });
+
+  const subsJson = Array.isArray(subcategorias) ? JSON.stringify(subcategorias) : '[]';
+  const isEssencial = essencial ? 1 : 0;
+
+  const r = db.prepare(
+    `INSERT INTO categorias_gastos (usuario_id, nome, tipo, essencial, subcategorias) VALUES (?, ?, ?, ?, ?)`
+  ).run(req.usuarioId, nome, tipo || 'Variável', isEssencial, subsJson);
+
+  res.status(201).json({
+    id: r.lastInsertRowid,
+    nome,
+    tipo: tipo || 'Variável',
+    essencial: Boolean(isEssencial),
+    subcategorias: JSON.parse(subsJson)
+  });
+});
+
+app.put('/api/categorias-gastos/:id', requireAuth, (req: any, res) => {
+  const { nome, tipo, essencial, subcategorias } = req.body;
+  const subsJson = Array.isArray(subcategorias) ? JSON.stringify(subcategorias) : '[]';
+  const isEssencial = essencial ? 1 : 0;
+
+  db.prepare(
+    `UPDATE categorias_gastos SET nome=?, tipo=?, essencial=?, subcategorias=? WHERE id=? AND usuario_id=?`
+  ).run(nome, tipo, isEssencial, subsJson, req.params.id, req.usuarioId);
+  res.json({ success: true });
+});
+
+app.delete('/api/categorias-gastos/:id', requireAuth, (req: any, res) => {
+  db.prepare('DELETE FROM categorias_gastos WHERE id = ? AND usuario_id = ?').run(req.params.id, req.usuarioId);
+  res.status(204).send();
+});
+
 // --- Receitas ---
 app.get('/api/receitas', requireAuth, (req: any, res) => {
   res.json(db.prepare('SELECT * FROM receitas WHERE usuario_id = ? ORDER BY data DESC').all(req.usuarioId));
@@ -480,6 +591,39 @@ app.get('/api/metas-planejamento/:ano', requireAuth, (req: any, res) => {
     return found || { id: null, ano, mes: i + 1, receitaPrevista: 0, gastoPrevisto: 0, metaInvestimento: 0, dividendosEsperados: 0 };
   });
   res.json(meses);
+});
+
+// --- Contas Bancárias/Instituições ---
+app.get('/api/contas', requireAuth, (req: any, res) => {
+  try {
+    const records = db.prepare('SELECT * FROM contas WHERE usuario_id = ? ORDER BY nome ASC').all(req.usuarioId);
+    res.json(records);
+  } catch (error) {
+    res.status(500).json({ error: 'Erro ao buscar contas' });
+  }
+});
+
+app.post('/api/contas', requireAuth, (req: any, res) => {
+  const { nome, saldoBase = 0 } = req.body;
+  if (!nome || typeof nome !== 'string') {
+    return res.status(400).json({ error: 'Nome da conta é obrigatório' });
+  }
+
+  try {
+    const r = db.prepare('INSERT INTO contas (usuario_id, nome, saldoBase) VALUES (?,?,?)').run(req.usuarioId, nome, saldoBase);
+    res.status(201).json({ id: r.lastInsertRowid, nome, saldoBase });
+  } catch (error) {
+    res.status(500).json({ error: 'Erro ao criar conta' });
+  }
+});
+
+app.delete('/api/contas/:id', requireAuth, (req: any, res) => {
+  try {
+    db.prepare('DELETE FROM contas WHERE id = ? AND usuario_id = ?').run(req.params.id, req.usuarioId);
+    res.status(204).send();
+  } catch (error) {
+    res.status(500).json({ error: 'Erro ao excluir conta' });
+  }
 });
 app.put('/api/metas-planejamento/:ano/:mes', requireAuth, (req: any, res) => {
   const ano = Number(req.params.ano);
@@ -1148,6 +1292,13 @@ app.get('/api/dashboard', requireAuth, async (req: any, res) => {
   // Recharts needs 'categoria', 'valor' for BarChart
   const gastosPorCategoria = gastosPorCategoriaRaw;
 
+  // Gastos por Conta
+  const gastosPorContaRaw = db.prepare(`SELECT conta, SUM(valor) as valor FROM gastos ${whereClause} GROUP BY conta ORDER BY valor DESC LIMIT 6`).all(...params) as any[];
+  const gastosPorConta = gastosPorContaRaw.map(g => ({
+    conta: g.conta || 'Sem conta',
+    valor: g.valor
+  }));
+
   // Evolução do Patrimônio e Investimentos (Últimos 6 meses com dados ou o mês atual)
   const evolucaoPatrimonioData = [];
   const evolucaoInvestimentosData = [];
@@ -1219,6 +1370,7 @@ app.get('/api/dashboard', requireAuth, async (req: any, res) => {
     },
     distribuicaoGastos,
     gastosPorCategoria,
+    gastosPorConta,
     evolucaoPatrimonio: evolucaoPatrimonioData,
     evolucaoDividendos: [],
     evolucaoInvestimentos: evolucaoInvestimentosData

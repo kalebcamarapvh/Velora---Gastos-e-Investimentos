@@ -3,7 +3,7 @@ import { Plus, Filter, Download, X, ChevronDown, FileText, FileSpreadsheet, Tras
 import * as XLSX from 'xlsx';
 import { Modal } from '../Modal';
 import { CurrencyInput } from '../CurrencyInput';
-import { getReceitas, createReceita, deleteReceita, type Receita } from '../../services/api';
+import { getReceitas, createReceita, deleteReceita, getContas, type Receita, type Conta } from '../../services/api';
 
 const CATEGORIAS_RECEITA = ['Salário', 'Freelance', 'Dividendos', 'Aluguel', 'Renda Extra', 'Investimentos', 'Outros'];
 
@@ -36,6 +36,8 @@ const emptyForm = {
 
 export const Receitas = () => {
   const [receitas, setReceitas] = useState<Receita[]>([]);
+  const [contasCadastradas, setContasCadastradas] = useState<Conta[]>([]);
+
   const [showModal, setShowModal] = useState(false);
   const [showFiltros, setShowFiltros] = useState(false);
   const [showExportMenu, setShowExportMenu] = useState(false);
@@ -47,7 +49,10 @@ export const Receitas = () => {
   const formatCurrency = (value: number) =>
     new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value);
 
-  const load = () => getReceitas().then(setReceitas).catch(console.error);
+  const load = () => {
+    getReceitas().then(setReceitas).catch(console.error);
+    getContas().then(setContasCadastradas).catch(console.error);
+  };
   useEffect(() => { load(); }, []);
 
   // ---------- derived: unique categories & accounts from data ----------
@@ -55,9 +60,14 @@ export const Receitas = () => {
     ['', ...Array.from(new Set(receitas.map(r => r.categoria))).sort()],
     [receitas]);
 
-  const contasDisponiveis = useMemo(() =>
-    ['', ...Array.from(new Set(receitas.map(r => r.conta).filter(Boolean))).sort()],
-    [receitas]);
+  const contasDisponiveis = useMemo(() => {
+    // Collect specific accounts from db + legacy history
+    const all = [
+      ...contasCadastradas.map(c => c.nome),
+      ...receitas.map(r => r.conta).filter(Boolean)
+    ];
+    return ['', ...Array.from(new Set(all)).sort()];
+  }, [receitas, contasCadastradas]);
 
   // ---------- apply filters ----------
   const receitasFiltradas = useMemo(() => {
@@ -399,9 +409,12 @@ export const Receitas = () => {
               </div>
             </div>
             <div>
-              <label className="block text-xs font-semibold text-slate-600 mb-1">Conta</label>
-              <input type="text" name="conta" value={form.conta} onChange={handleChange} placeholder="Ex: Conta Corrente, Corretora..."
-                className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400" />
+              <label className="block text-xs font-semibold text-slate-600 mb-1">Conta (Opcional)</label>
+              <select name="conta" value={form.conta} onChange={handleChange}
+                className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-emerald-400">
+                <option value="">(Selecione ou deixe em branco)</option>
+                {contasCadastradas.map(c => <option key={c.id} value={c.nome}>{c.nome}</option>)}
+              </select>
             </div>
             <div className="flex gap-3 pt-2">
               <button type="button" onClick={() => setShowModal(false)}

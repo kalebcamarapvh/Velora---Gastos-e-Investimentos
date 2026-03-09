@@ -124,6 +124,36 @@ export interface MetaPlanejamento {
     dividendosEsperados: number;
 }
 
+// ---- Categorias de Gastos ----
+
+export interface CategoriaGasto {
+    id: number;
+    nome: string;
+    tipo: 'Fixo' | 'Variável';
+    essencial: boolean;
+    subcategorias: string[];
+}
+
+export const getCategoriasGastos = (): Promise<CategoriaGasto[]> =>
+    fetch(`${BASE}/categorias-gastos`).then(r => r.json());
+
+export const createCategoriaGasto = (data: Omit<CategoriaGasto, 'id'>): Promise<CategoriaGasto> =>
+    fetch(`${BASE}/categorias-gastos`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+    }).then(r => r.json());
+
+export const updateCategoriaGasto = (id: number, data: Omit<CategoriaGasto, 'id'>): Promise<void> =>
+    fetch(`${BASE}/categorias-gastos/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+    }).then(() => { });
+
+export const deleteCategoriaGasto = (id: number): Promise<void> =>
+    fetch(`${BASE}/categorias-gastos/${id}`, { method: 'DELETE' }).then(() => { });
+
 export const getMetasPlanejamento = (ano: number): Promise<MetaPlanejamento[]> =>
     fetch(`${BASE}/metas-planejamento/${ano}`).then(r => r.json());
 
@@ -159,3 +189,23 @@ export const createLancamentoInvestimento = (data: Omit<LancamentoInvestimento, 
 
 export const deleteLancamentoInvestimento = (id: number): Promise<void> =>
     fetch(`${BASE}/lancamentos-investimentos/${id}`, { method: 'DELETE' }).then(() => { });
+
+// ---- Contas ----
+export interface Conta {
+    id: number;
+    nome: string;
+    saldoBase: number;
+}
+
+export const getContas = (): Promise<Conta[]> =>
+    fetch(`${BASE}/contas`).then(r => r.json());
+
+export const createConta = (data: Omit<Conta, 'id'>): Promise<Conta> =>
+    fetch(`${BASE}/contas`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+    }).then(r => r.json());
+
+export const deleteConta = (id: number): Promise<void> =>
+    fetch(`${BASE}/contas/${id}`, { method: 'DELETE' }).then(() => { });

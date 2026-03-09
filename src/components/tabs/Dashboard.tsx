@@ -76,6 +76,7 @@ export const Dashboard = () => {
   const [data, setData] = React.useState<any>(null);
   const [loading, setLoading] = React.useState(true);
   const [isSyncing, setIsSyncing] = React.useState(false);
+  const [chartView, setChartView] = React.useState<'categoria' | 'conta'>('categoria');
 
   const fetchDashboard = async (mes: string) => {
     setLoading(true);
@@ -130,7 +131,7 @@ export const Dashboard = () => {
 
   if (!data) return null;
 
-  const { dashboard, distribuicaoGastos, gastosPorCategoria, evolucaoPatrimonio, evolucaoDividendos, evolucaoInvestimentos } = data;
+  const { dashboard, distribuicaoGastos, gastosPorCategoria, gastosPorConta, evolucaoPatrimonio, evolucaoDividendos, evolucaoInvestimentos } = data;
 
   const chartColor = dark ? '#10b981' : '#8b5cf6';
 
@@ -378,15 +379,33 @@ export const Dashboard = () => {
 
       {/* Charts Row 2 */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Gastos por Categoria */}
-        <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
-          <h3 className="text-lg font-semibold text-slate-800 mb-6">Gastos por Categoria</h3>
-          <div className="h-72">
+        {/* Gastos por Categoria / Conta */}
+        <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 flex flex-col">
+          <div className="flex items-center justify-between mb-6">
+            <h3 className="text-lg font-semibold text-slate-800">
+              Gastos por {chartView === 'categoria' ? 'Categoria' : 'Conta'}
+            </h3>
+            <div className="flex bg-slate-100 p-1 rounded-lg">
+              <button
+                onClick={() => setChartView('categoria')}
+                className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-all ${chartView === 'categoria' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+              >
+                Categorias
+              </button>
+              <button
+                onClick={() => setChartView('conta')}
+                className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-all ${chartView === 'conta' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+              >
+                Contas
+              </button>
+            </div>
+          </div>
+          <div className="h-72 flex-1">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={gastosPorCategoria} layout="vertical" margin={{ left: 40 }}>
+              <BarChart data={chartView === 'categoria' ? gastosPorCategoria : gastosPorConta} layout="vertical" margin={{ left: 40 }}>
                 <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#e2e8f0" />
                 <XAxis type="number" axisLine={false} tickLine={false} tick={{ fill: '#64748b' }} tickFormatter={(value) => `R$ ${value / 1000}k`} />
-                <YAxis dataKey="categoria" type="category" axisLine={false} tickLine={false} tick={{ fill: '#64748b' }} />
+                <YAxis dataKey={chartView} type="category" axisLine={false} tickLine={false} tick={{ fill: '#64748b' }} />
                 <Tooltip content={(props) => <PrivacyTooltip {...props} formatCurrency={formatCurrency} />} cursor={{ fill: 'rgba(0,0,0,0.03)' }} />
                 <Bar dataKey="valor" name="Valor" fill="#f43f5e" radius={[0, 4, 4, 0]} barSize={24} />
               </BarChart>
