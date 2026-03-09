@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Plus, CreditCard, Trash2 } from 'lucide-react';
 import { Modal } from '../Modal';
+import { CurrencyInput } from '../CurrencyInput';
 import { getDividas, createDivida, deleteDivida, type Divida } from '../../services/api';
 
 const emptyForm = {
@@ -32,6 +33,10 @@ export const Dividas = () => {
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     setForm(f => ({ ...f, [e.target.name]: e.target.value }));
+  };
+
+  const handleCurrencyChange = (name: string, value: number) => {
+    setForm(f => ({ ...f, [name]: String(value) }));
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -162,9 +167,11 @@ export const Dividas = () => {
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="block text-xs font-semibold text-slate-600 mb-1">Valor Total (R$) *</label>
-                <input
-                  type="number" name="valorTotal" value={form.valorTotal} onChange={handleChange} required min="0" step="0.01"
-                  placeholder="0,00"
+                <CurrencyInput
+                  name="valorTotal"
+                  value={Number(form.valorTotal) || 0}
+                  onChange={(val) => handleCurrencyChange('valorTotal', val)}
+                  required
                   className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-rose-400"
                 />
               </div>
@@ -181,17 +188,21 @@ export const Dividas = () => {
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="block text-xs font-semibold text-slate-600 mb-1">Parcela Mensal (R$) *</label>
-                <input
-                  type="number" name="parcela" value={form.parcela} onChange={handleChange} required min="0" step="0.01"
-                  placeholder="0,00"
+                <CurrencyInput
+                  name="parcela"
+                  value={Number(form.parcela) || 0}
+                  onChange={(val) => handleCurrencyChange('parcela', val)}
+                  required
                   className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-rose-400"
                 />
               </div>
               <div>
                 <label className="block text-xs font-semibold text-slate-600 mb-1">Saldo Restante (R$) *</label>
-                <input
-                  type="number" name="saldoRestante" value={form.saldoRestante} onChange={handleChange} required min="0" step="0.01"
-                  placeholder="0,00"
+                <CurrencyInput
+                  name="saldoRestante"
+                  value={Number(form.saldoRestante) || 0}
+                  onChange={(val) => handleCurrencyChange('saldoRestante', val)}
+                  required
                   className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-rose-400"
                 />
               </div>

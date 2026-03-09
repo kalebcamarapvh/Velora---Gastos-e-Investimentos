@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { Plus, TrendingUp, TrendingDown, DollarSign, Filter, AlertCircle, Trash2 } from 'lucide-react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from 'recharts';
 import { Modal } from '../Modal';
+import { CurrencyInput } from '../CurrencyInput';
 import {
   getCarteira,
   getLancamentosInvestimentos,
@@ -167,9 +168,17 @@ export const Investimentos = () => {
   const handleCompraChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
     setCompraForm(f => ({ ...f, [e.target.name]: e.target.value }));
 
+  const handleCompraCurrencyChange = (value: number) =>
+    setCompraForm(f => ({ ...f, preco: String(value) }));
+
   const handleVendaChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setVendaError('');
     setVendaForm(f => ({ ...f, [e.target.name]: e.target.value }));
+  };
+
+  const handleVendaCurrencyChange = (value: number) => {
+    setVendaError('');
+    setVendaForm(f => ({ ...f, preco: String(value) }));
   };
 
   // ── Submit ──
@@ -536,9 +545,13 @@ export const Investimentos = () => {
                     <label className="block text-xs font-semibold text-slate-600 mb-1">
                       Preço unitário ({compraForm.moeda}) *
                     </label>
-                    <input type="number" name="preco" value={compraForm.preco} onChange={handleCompraChange}
-                      required min="0" step="any" placeholder="0,00"
-                      className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400" />
+                    <CurrencyInput
+                      name="preco"
+                      value={Number(compraForm.preco) || 0}
+                      onChange={handleCompraCurrencyChange}
+                      required
+                      className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400"
+                    />
                   </div>
                 </div>
                 {/* Real-time total */}
@@ -617,9 +630,13 @@ export const Investimentos = () => {
                       <label className="block text-xs font-semibold text-slate-600 mb-1">
                         Preço de Venda ({selectedAtivo.moeda}) *
                       </label>
-                      <input type="number" name="preco" value={vendaForm.preco} onChange={handleVendaChange}
-                        required min="0" step="any" placeholder="0,00"
-                        className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-rose-400" />
+                      <CurrencyInput
+                        name="preco"
+                        value={Number(vendaForm.preco) || 0}
+                        onChange={handleVendaCurrencyChange}
+                        required
+                        className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-rose-400"
+                      />
                     </div>
 
                     {/* Real-time total venda */}

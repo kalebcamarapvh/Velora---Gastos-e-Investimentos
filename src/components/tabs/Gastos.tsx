@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { Plus, Filter, Download, X, ChevronDown, FileText, FileSpreadsheet, Trash2 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { Modal } from '../Modal';
+import { CurrencyInput } from '../CurrencyInput';
 import { getGastos, createGasto, deleteGasto, type Gasto } from '../../services/api';
 
 const CATEGORIAS_GASTO = ['Moradia', 'Alimentação', 'Transporte', 'Lazer', 'Saúde', 'Educação', 'Outros'];
@@ -83,6 +84,9 @@ export const Gastos = () => {
   // ---------- form ----------
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
     setForm(f => ({ ...f, [e.target.name]: e.target.value }));
+
+  const handleCurrencyChange = (value: number) =>
+    setForm(f => ({ ...f, valor: value.toString() }));
 
   const handleFiltroChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
     setFiltros(f => ({ ...f, [e.target.name]: e.target.value }));
@@ -369,8 +373,13 @@ export const Gastos = () => {
               </div>
               <div className="col-span-2 sm:col-span-1">
                 <label className="block text-xs font-semibold text-slate-600 mb-1">Valor (R$) *</label>
-                <input type="number" name="valor" value={form.valor} onChange={handleChange} required min="0" step="0.01" placeholder="0,00"
-                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-rose-400" />
+                <CurrencyInput
+                  name="valor"
+                  value={Number(form.valor) || 0}
+                  onChange={handleCurrencyChange}
+                  required
+                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-rose-400"
+                />
               </div>
             </div>
             <div>

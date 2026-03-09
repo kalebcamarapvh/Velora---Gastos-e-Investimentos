@@ -3,6 +3,7 @@ import { Calendar, Target, TrendingUp, TrendingDown, Edit3, Check, X, DollarSign
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, LineChart, Line } from 'recharts';
 import { getMetasPlanejamento, updateMetaPlanejamento, type MetaPlanejamento } from '../../services/api';
 import { Modal } from '../Modal';
+import { CurrencyInput } from '../CurrencyInput';
 
 const NOMES_MESES = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
 const NOMES_MESES_SHORT = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
@@ -105,27 +106,35 @@ const MetaModal = ({ ano, metas, onClose, onSaved }: MetaModalProps) => {
         <div className="grid grid-cols-2 gap-4">
           <div>
             <label className="block text-xs font-semibold text-slate-600 mb-1">Receita Prevista (R$)</label>
-            <input type="number" min="0" step="100" value={form.receitaPrevista}
-              onChange={e => setForm(f => ({ ...f, receitaPrevista: e.target.value }))}
-              className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400" />
+            <CurrencyInput
+              value={Number(form.receitaPrevista) || 0}
+              onChange={(value) => setForm(f => ({ ...f, receitaPrevista: String(value) }))}
+              className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400"
+            />
           </div>
           <div>
             <label className="block text-xs font-semibold text-slate-600 mb-1">Gasto Previsto (R$)</label>
-            <input type="number" min="0" step="100" value={form.gastoPrevisto}
-              onChange={e => setForm(f => ({ ...f, gastoPrevisto: e.target.value }))}
-              className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-rose-400" />
+            <CurrencyInput
+              value={Number(form.gastoPrevisto) || 0}
+              onChange={(value) => setForm(f => ({ ...f, gastoPrevisto: String(value) }))}
+              className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-rose-400"
+            />
           </div>
           <div>
             <label className="block text-xs font-semibold text-slate-600 mb-1">Meta de Investimento (R$)</label>
-            <input type="number" min="0" step="100" value={form.metaInvestimento}
-              onChange={e => setForm(f => ({ ...f, metaInvestimento: e.target.value }))}
-              className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-violet-400" />
+            <CurrencyInput
+              value={Number(form.metaInvestimento) || 0}
+              onChange={(value) => setForm(f => ({ ...f, metaInvestimento: String(value) }))}
+              className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-violet-400"
+            />
           </div>
           <div>
             <label className="block text-xs font-semibold text-slate-600 mb-1">Dividendos Estimados (R$)</label>
-            <input type="number" min="0" step="10" value={form.dividendosEsperados}
-              onChange={e => setForm(f => ({ ...f, dividendosEsperados: e.target.value }))}
-              className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-amber-400" />
+            <CurrencyInput
+              value={Number(form.dividendosEsperados) || 0}
+              onChange={(value) => setForm(f => ({ ...f, dividendosEsperados: String(value) }))}
+              className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
+            />
           </div>
         </div>
 
@@ -382,10 +391,11 @@ export const Planejamento = () => {
                       <>
                         {(['receitaPrevista', 'gastoPrevisto', 'metaInvestimento', 'dividendosEsperados'] as (keyof EditForm)[]).map(key => (
                           <td key={key} className="px-2 py-1">
-                            <input type="number" name={key} value={editForm[key]}
-                              onChange={e => setEditForm(f => ({ ...f, [e.target.name]: e.target.value }))}
-                              min="0" step="100"
-                              className="w-full px-2 py-1.5 border border-slate-300 rounded-lg text-xs text-right focus:outline-none focus:ring-2 focus:ring-violet-400" />
+                            <CurrencyInput
+                              value={Number(editForm[key]) || 0}
+                              onChange={(value) => setEditForm(f => ({ ...f, [key]: String(value) }))}
+                              className="w-full px-2 py-1.5 border border-slate-300 rounded-lg text-xs text-right focus:outline-none focus:ring-2 focus:ring-violet-400"
+                            />
                           </td>
                         ))}
                         <td className="p-4 text-right text-xs text-slate-400">—</td>

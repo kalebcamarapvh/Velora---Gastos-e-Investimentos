@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Plus, Repeat, Trash2 } from 'lucide-react';
 import { Modal } from '../Modal';
+import { CurrencyInput } from '../CurrencyInput';
 import { getAssinaturas, createAssinatura, deleteAssinatura, type Assinatura } from '../../services/api';
 
 const CATEGORIAS = ['Lazer', 'Moradia', 'Saúde', 'Educação', 'Trabalho', 'Outros'];
@@ -33,6 +34,10 @@ export const Assinaturas = () => {
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     setForm(f => ({ ...f, [e.target.name]: e.target.value }));
+  };
+
+  const handleCurrencyChange = (value: number) => {
+    setForm(f => ({ ...f, valor: value.toString() }));
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -171,8 +176,11 @@ export const Assinaturas = () => {
               </div>
               <div>
                 <label className="block text-xs font-semibold text-slate-600 mb-1">Valor (R$) *</label>
-                <input
-                  type="number" name="valor" value={form.valor} onChange={handleChange} required min="0" step="0.01" placeholder="0,00"
+                <CurrencyInput
+                  name="valor"
+                  value={Number(form.valor) || 0}
+                  onChange={handleCurrencyChange}
+                  required
                   className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-purple-400"
                 />
               </div>

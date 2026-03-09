@@ -903,7 +903,20 @@ app.get('/api/alertas', requireAuth, (req: any, res) => {
 // ---------- ROTA: Chat com DeepSeek IA ----------
 // IMPORTANTE (privacidade): Apenas um RESUMO agregado dos dados
 // é enviado à API. Valores brutos e descrições não são enviados.
-app.post('/api/ai/chat', requireAuth, async (req: any, res) => {
+
+const aiRateLimit = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hora
+  max: 10,
+  keyGenerator: (req: any) => String(req.usuarioId), // por usuário autenticado
+  message: { error: 'Limite de mensagens atingido. Tente novamente em 1 hora.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+// Adiciona um Set em memória para deduplicar requests idênticos em < 2s
+const recentRequests = new Map<string, number>();
+
+app.post('/api/ai/chat', requireAuth, aiRateLimit, async (req: any, res) => {
   const { mensagem, historico } = req.body as {
     mensagem: string;
     historico: { role: 'user' | 'assistant'; content: string }[];
@@ -912,6 +925,13 @@ app.post('/api/ai/chat', requireAuth, async (req: any, res) => {
   if (!mensagem || mensagem.trim().length === 0) {
     return res.status(400).json({ error: 'Mensagem não pode ser vazia.' });
   }
+
+  const key = `${req.usuarioId}:${mensagem}`;
+  const agora = Date.now();
+  if (recentRequests.has(key) && (agora - recentRequests.get(key)!) < 2000) {
+    return res.status(429).json({ error: 'Aguarde um momento antes de enviar a mesma mensagem novamente.' });
+  }
+  recentRequests.set(key, agora);
 
   const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY;
   if (!DEEPSEEK_API_KEY) {
@@ -975,7 +995,7 @@ app.post('/api/ai/chat', requireAuth, async (req: any, res) => {
   const historicoLimitado = (historico || []).slice(-10);
 
   try {
-    const response = await fetch('https://api.deepseek.com/v1/chat/completions', { // restored the /v1/ endpoint prefix
+    const response = await fetch('https://api.deepseek.com/v1/chat/completions', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -983,7 +1003,7 @@ app.post('/api/ai/chat', requireAuth, async (req: any, res) => {
       },
       body: JSON.stringify({
         model: 'deepseek-chat',
-        max_tokens: 800,
+        max_tokens: 400,
         messages: [
           {
             role: 'system',
@@ -1005,7 +1025,7 @@ ${contextoFinanceiro}`,
     if (!response.ok) {
       const err = await response.text();
       console.error('DeepSeek API error status:', response.status, err);
-      return res.status(502).json({ error: 'Erro ao comunicar com a IA (Serviço indisponível no momento).' }); // generic error
+      return res.status(502).json({ error: 'Erro ao comunicar com a IA (Serviço indisponível no momento).' });
     }
 
     const data = await response.json();
