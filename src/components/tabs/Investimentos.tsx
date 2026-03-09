@@ -335,7 +335,7 @@ export const Investimentos = () => {
                   <th className="p-4 text-right">Rentab.</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100">
+              <tbody className="">
                 {carteiraFiltrada.map((item) => {
                   const lucro = item.valorAtual - item.valorInvestido;
                   const rent = item.valorInvestido > 0 ? (lucro / item.valorInvestido) * 100 : 0;
@@ -440,7 +440,7 @@ export const Investimentos = () => {
                 <th className="p-4 w-10"></th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-100">
+            <tbody className="">
               {lancamentos.map((l) => (
                 <tr key={l.id} className="hover:bg-slate-50/50 transition-colors text-slate-700">
                   <td className="p-4 whitespace-nowrap">{new Date(l.data + 'T00:00:00').toLocaleDateString('pt-BR')}</td>

@@ -334,13 +334,13 @@ export const Receitas = () => {
                 <th className="p-4 w-10"></th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-100">
+            <tbody className="">
               {receitasFiltradas.map((item) => (
                 <tr key={item.id} className="hover:bg-slate-50/50 transition-colors text-sm text-slate-700">
                   <td className="p-4 whitespace-nowrap">{new Date(item.data + 'T00:00:00').toLocaleDateString('pt-BR')}</td>
                   <td className="p-4 font-medium text-slate-900">{item.descricao}</td>
                   <td className="p-4">
-                    <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700">
+                    <span className="inline-flex items-center text-xs font-semibold text-emerald-600">
                       {item.categoria}
                     </span>
                   </td>

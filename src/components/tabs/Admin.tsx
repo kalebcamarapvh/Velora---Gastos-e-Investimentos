@@ -312,7 +312,7 @@ export const Admin = () => {
                                 ))}
                             </tr>
                         </thead>
-                        <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                        <tbody className="">
                             {stats.topIps.length === 0 ? (
                                 <tr>
                                     <td colSpan={5} className="px-5 py-8 text-center text-slate-400 text-sm">Nenhum log registrado ainda.</td>
@@ -354,7 +354,7 @@ export const Admin = () => {
                                 ))}
                             </tr>
                         </thead>
-                        <tbody className="divide-y divide-slate-50 dark:divide-slate-800/50 font-mono text-xs">
+                        <tbody className="font-mono text-xs">
                             {stats.recentLogs.length === 0 ? (
                                 <tr>
                                     <td colSpan={5} className="px-4 py-6 text-center text-slate-400">Nenhum log registrado.</td>

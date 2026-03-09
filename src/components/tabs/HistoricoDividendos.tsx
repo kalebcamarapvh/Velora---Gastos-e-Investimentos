@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts';
-import { CalendarClock, CheckCircle2, Clock, RefreshCw, AlertCircle, Filter, ChevronLeft, ChevronRight } from 'lucide-react';
+import { CalendarClock, CheckCircle2, Calendar, RefreshCw, AlertCircle, Filter, ChevronLeft, ChevronRight } from 'lucide-react';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface DividendEntry {
@@ -26,15 +26,7 @@ const fmtDate = (iso: string | null) => {
   return new Date(iso).toLocaleDateString('pt-BR');
 };
 
-const TIPO_COLORS: Record<string, string> = {
-  JCP: 'bg-violet-50 text-violet-700',
-  JSCP: 'bg-violet-50 text-violet-700',
-  DIVIDENDO: 'bg-emerald-50 text-emerald-700',
-  RENDIMENTO: 'bg-blue-50 text-blue-700',
-  BONIFICACAO: 'bg-amber-50 text-amber-700',
-};
-const tipoClass = (t: string) =>
-  TIPO_COLORS[t.toUpperCase()] ?? 'bg-slate-100 text-slate-700';
+// Colors removed per user request
 
 const tipoLabel = (t: string): string => {
   const up = t.toUpperCase();
@@ -46,12 +38,12 @@ const tipoLabel = (t: string): string => {
 
 const StatusBadge = ({ status }: { status: 'a_receber' | 'pago' }) =>
   status === 'a_receber' ? (
-    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold bg-blue-50 text-blue-700 border border-blue-200">
-      <Clock className="w-3 h-3" /> A Receber
+    <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold bg-[#0039A6] text-white shadow-sm">
+      <Calendar className="w-3.5 h-3.5" /> A Receber
     </span>
   ) : (
-    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
-      <CheckCircle2 className="w-3 h-3" /> Pago
+    <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold bg-emerald-600 text-white shadow-sm">
+      <CheckCircle2 className="w-3.5 h-3.5" /> Pago
     </span>
   );
 
@@ -257,7 +249,7 @@ export const HistoricoDividendos = () => {
                 <th className="p-4 text-right">Total Líquido</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-100">
+            <tbody className="">
               {loading && entries.length === 0 ? (
                 Array.from({ length: 5 }).map((_, i) => (
                   <tr key={i} className="animate-pulse">
@@ -277,15 +269,12 @@ export const HistoricoDividendos = () => {
               ) : (
                 currentItems.map((e, i) => (
                   <tr key={i}
-                    className={`hover:bg-slate-50/50 transition-colors text-slate-700 ${e.status === 'a_receber' ? 'bg-blue-50/30' : ''
-                      }`}
+                    className="hover:bg-slate-50/50 transition-colors text-slate-700"
                   >
                     <td className="p-4 font-bold text-slate-900">{e.ticker}</td>
                     <td className="p-4"><StatusBadge status={e.status} /></td>
-                    <td className="p-4">
-                      <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold ${tipoClass(e.tipo)}`}>
-                        {tipoLabel(e.tipo)}
-                      </span>
+                    <td className="p-4 font-medium text-slate-600">
+                      {tipoLabel(e.tipo)}
                     </td>
                     <td className="p-4 text-right whitespace-nowrap">{fmtDate(e.dataCom)}</td>
                     <td className="p-4 text-right whitespace-nowrap font-medium">

@@ -105,12 +105,12 @@ export const Assinaturas = () => {
                 <th className="p-4 w-10"></th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-100">
+            <tbody className="">
               {assinaturas.map((item) => (
                 <tr key={item.id} className="hover:bg-slate-50/50 transition-colors text-sm text-slate-700">
                   <td className="p-4 font-medium text-slate-900">{item.servico}</td>
                   <td className="p-4">
-                    <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-slate-100 text-slate-800">
+                    <span className="inline-flex items-center text-xs font-semibold text-slate-700">
                       {item.categoria}
                     </span>
                   </td>

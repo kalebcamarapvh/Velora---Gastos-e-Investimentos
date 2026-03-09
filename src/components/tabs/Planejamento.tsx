@@ -379,7 +379,7 @@ export const Planejamento = () => {
                 <th className="p-4 w-16" />
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-100">
+            <tbody className="">
               {metas.map((m, i) => {
                 const saldo = m.receitaPrevista - m.gastoPrevisto;
                 const divReal = dividendosReais[i + 1] ?? 0;

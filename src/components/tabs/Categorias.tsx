@@ -185,26 +185,26 @@ export const Categorias = () => {
                   <th className="p-4 w-20" />
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100">
+              <tbody className="">
                 {categorias.map((cat) => (
                   <tr key={cat.id} className="hover:bg-slate-50/50 transition-colors text-sm text-slate-700">
                     <td className="p-4 font-bold text-slate-900">{cat.nome}</td>
                     <td className="p-4">
                       <div className="flex flex-wrap gap-2">
                         {cat.subcategorias.map((sub, idx) => (
-                          <span key={idx} className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-slate-100 text-slate-600 border border-slate-200">
+                          <span key={idx} className="inline-flex items-center text-xs font-semibold text-slate-600">
                             {sub}
                           </span>
                         ))}
                       </div>
                     </td>
                     <td className="p-4">
-                      <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${cat.tipo === 'Fixo' ? 'bg-blue-50 text-blue-700' : 'bg-orange-50 text-orange-700'}`}>
+                      <span className={`inline-flex items-center text-xs font-semibold ${cat.tipo === 'Fixo' ? 'text-blue-600' : 'text-orange-600'}`}>
                         {cat.tipo}
                       </span>
                     </td>
                     <td className="p-4 text-center">
-                      <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${cat.essencial ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'}`}>
+                      <span className={`inline-flex items-center text-xs font-semibold ${cat.essencial ? 'text-emerald-600' : 'text-rose-600'}`}>
                         {cat.essencial ? 'Sim' : 'Não'}
                       </span>
                     </td>
@@ -240,7 +240,7 @@ export const Categorias = () => {
                     <th className="p-4 w-20" />
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-100">
+                <tbody className="">
                   {contas.map((conta) => (
                     <tr key={conta.id} className="hover:bg-slate-50/50 transition-colors text-sm text-slate-700">
                       <td className="p-4 font-bold text-slate-900">{conta.nome}</td>
