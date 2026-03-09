@@ -798,10 +798,223 @@ app.get('/api/quotes', requireAuth, quotesLimiter, async (req: any, res) => {
       }
     }
 
-    res.json({ message: 'Cotações atualizadas com sucesso', updatedCount, usdRate });
+    res.json({ message: 'Cotações atualizadas', updated: updatedCount, usdRate });
   } catch (error) {
-    console.error('Error in /api/quotes:', error);
-    res.status(500).json({ error: 'Falha ao atualizar cotações' });
+    console.error('Fatal erro in /api/quotes:', error);
+    res.status(500).json({ error: 'Erro ao atualizar cotações.' });
+  }
+});
+
+
+// ---------- ROTA: Alertas de Gastos Anômalos ----------
+// Algoritmo local — nenhum dado sai do servidor
+// Compara o mês atual com a média dos últimos 3 meses por categoria
+app.get('/api/alertas', requireAuth, (req: any, res) => {
+  const hoje = new Date();
+  const anoAtual = hoje.getFullYear();
+  const mesAtual = String(hoje.getMonth() + 1).padStart(2, '0');
+  const mesAtualPrefix = `${anoAtual}-${mesAtual}`;
+
+  // Últimos 3 meses (excluindo o atual)
+  const mesesAnteriores: string[] = [];
+  for (let i = 1; i <= 3; i++) {
+    const d = new Date(anoAtual, hoje.getMonth() - i, 1);
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    mesesAnteriores.push(`${y}-${m}`);
+  }
+
+  // Gastos do mês atual por categoria
+  const gastosAtuais = db.prepare(`
+    SELECT categoria, SUM(valor) as total
+    FROM gastos
+    WHERE data LIKE ? AND usuario_id = ?
+    GROUP BY categoria
+  `).all(`${mesAtualPrefix}%`, req.usuarioId) as { categoria: string; total: number }[];
+
+  // Média dos últimos 3 meses por categoria
+  const mediaHistorica: Record<string, number> = {};
+  for (const mes of mesesAnteriores) {
+    const rows = db.prepare(`
+      SELECT categoria, SUM(valor) as total
+      FROM gastos
+      WHERE data LIKE ? AND usuario_id = ?
+      GROUP BY categoria
+    `).all(`${mes}%`, req.usuarioId) as { categoria: string; total: number }[];
+
+    for (const row of rows) {
+      mediaHistorica[row.categoria] = (mediaHistorica[row.categoria] || 0) + row.total;
+    }
+  }
+
+  // Divide pelo número de meses com dados para obter a média real
+  for (const cat in mediaHistorica) {
+    mediaHistorica[cat] = mediaHistorica[cat] / mesesAnteriores.length;
+  }
+
+  // Detecta anomalias: gasto atual > 130% da média histórica
+  const THRESHOLD = 1.3;
+  const alertas: {
+    categoria: string;
+    gastoAtual: number;
+    mediaHistorica: number;
+    percentualAcima: number;
+    severidade: 'alta' | 'media';
+  }[] = [];
+
+  for (const gasto of gastosAtuais) {
+    const media = mediaHistorica[gasto.categoria];
+    if (!media || media === 0) continue; // sem histórico, ignora
+
+    const ratio = gasto.total / media;
+    if (ratio > THRESHOLD) {
+      alertas.push({
+        categoria: gasto.categoria,
+        gastoAtual: gasto.total,
+        mediaHistorica: media,
+        percentualAcima: Math.round((ratio - 1) * 100),
+        severidade: ratio > 2.0 ? 'alta' : 'media',
+      });
+    }
+  }
+
+  // Ordena pelo maior desvio primeiro
+  alertas.sort((a, b) => b.percentualAcima - a.percentualAcima);
+
+  // Resumo geral do mês (para contexto)
+  let totalMesAtual = 0;
+  for (let i = 0; i < gastosAtuais.length; i++) {
+    totalMesAtual += gastosAtuais[i].total;
+  }
+  const totalMesAnterior = db.prepare(`
+    SELECT SUM(valor) as total FROM gastos
+    WHERE data LIKE ? AND usuario_id = ?
+  `).get(`${mesesAnteriores[0]}%`, req.usuarioId) as any;
+
+  res.json({
+    mesAtual: mesAtualPrefix,
+    totalGastosAtual: totalMesAtual,
+    totalMesAnterior: totalMesAnterior?.total || 0,
+    alertas,
+  });
+});
+
+
+// ---------- ROTA: Chat com DeepSeek IA ----------
+// IMPORTANTE (privacidade): Apenas um RESUMO agregado dos dados
+// é enviado à API. Valores brutos e descrições não são enviados.
+app.post('/api/ai/chat', requireAuth, async (req: any, res) => {
+  const { mensagem, historico } = req.body as {
+    mensagem: string;
+    historico: { role: 'user' | 'assistant'; content: string }[];
+  };
+
+  if (!mensagem || mensagem.trim().length === 0) {
+    return res.status(400).json({ error: 'Mensagem não pode ser vazia.' });
+  }
+
+  const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY;
+  if (!DEEPSEEK_API_KEY) {
+    console.error('[SECURITY ALERTA] Servidor tentou acessar a rota IA, mas DEEPSEEK_API_KEY ausente no .env');
+    return res.status(500).json({ error: 'O assistente de IA está temporariamente indisponível. Contate o administrador.' });
+  }
+
+  // --- Monta resumo financeiro agregado (sem dados sensíveis brutos) ---
+  const hoje = new Date();
+  const anoAtual = hoje.getFullYear();
+  const mesAtual = String(hoje.getMonth() + 1).padStart(2, '0');
+  const mesPrefix = `${anoAtual}-${mesAtual}`;
+
+  const receitasMes = (db.prepare(`
+    SELECT SUM(valor) as total FROM receitas WHERE data LIKE ? AND usuario_id = ?
+  `).get(`${mesPrefix}%`, req.usuarioId) as any)?.total || 0;
+
+  const gastosMes = (db.prepare(`
+    SELECT SUM(valor) as total FROM gastos WHERE data LIKE ? AND usuario_id = ?
+  `).get(`${mesPrefix}%`, req.usuarioId) as any)?.total || 0;
+
+  const gastosPorCategoria = db.prepare(`
+    SELECT categoria, SUM(valor) as total
+    FROM gastos WHERE data LIKE ? AND usuario_id = ?
+    GROUP BY categoria ORDER BY total DESC LIMIT 6
+  `).all(`${mesPrefix}%`, req.usuarioId) as { categoria: string; total: number }[];
+
+  const dividasTotal = (db.prepare(`
+    SELECT SUM(saldoRestante) as total FROM dividas WHERE usuario_id = ?
+  `).get(req.usuarioId) as any)?.total || 0;
+
+  const assinaturasTotal = (db.prepare(`
+    SELECT SUM(valor) as total FROM assinaturas WHERE usuario_id = ?
+  `).get(req.usuarioId) as any)?.total || 0;
+
+  const metasCount = (db.prepare(`
+    SELECT COUNT(*) as total FROM metas_financeiras WHERE usuario_id = ?
+  `).get(req.usuarioId) as any)?.total || 0;
+
+  const saldoMes = receitasMes - gastosMes;
+  const taxaPoupanca = receitasMes > 0 ? ((saldoMes / receitasMes) * 100).toFixed(1) : '0';
+
+  const categoriasSummary = gastosPorCategoria
+    .map(g => `${g.categoria}: R$${g.total.toFixed(2)}`)
+    .join(', ');
+
+  // Contexto financeiro que será enviado à IA (nenhuma informação pessoal identificável)
+  const contextoFinanceiro = `
+[Contexto financeiro do usuário - Mês atual (${mesPrefix})]
+- Receitas: R$${receitasMes.toFixed(2)}
+- Gastos: R$${gastosMes.toFixed(2)}
+- Saldo: R$${saldoMes.toFixed(2)}
+- Taxa de poupança: ${taxaPoupanca}%
+- Gastos por categoria: ${categoriasSummary || 'Sem dados'}
+- Dívidas em aberto: R$${dividasTotal.toFixed(2)}
+- Assinaturas mensais: R$${assinaturasTotal.toFixed(2)}/mês
+- Metas cadastradas: ${metasCount}
+`.trim();
+
+  // Monta histórico de conversa para a API (máx. 10 turnos para economizar tokens)
+  const historicoLimitado = (historico || []).slice(-10);
+
+  try {
+    const response = await fetch('https://api.deepseek.com/v1/chat/completions', { // restored the /v1/ endpoint prefix
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${DEEPSEEK_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: 'deepseek-chat',
+        max_tokens: 800,
+        messages: [
+          {
+            role: 'system',
+            content: `Você é o Velora AI, um assistente financeiro inteligente e empático integrado ao app Velora. 
+Você tem acesso a um resumo financeiro agregado do usuário (sem dados pessoais identificáveis).
+Responda sempre em português brasileiro. Seja direto, prático e use linguagem simples.
+Quando identificar problemas, ofereça sugestões concretas e acionáveis.
+Não invente dados que não estejam no contexto financeiro fornecido.
+Nunca compartilhe ou mencione os dados financeiros brutos diretamente — use análises e percentuais.
+
+${contextoFinanceiro}`,
+          },
+          ...historicoLimitado,
+          { role: 'user', content: mensagem },
+        ],
+      }),
+    });
+
+    if (!response.ok) {
+      const err = await response.text();
+      console.error('DeepSeek API error status:', response.status, err);
+      return res.status(502).json({ error: 'Erro ao comunicar com a IA (Serviço indisponível no momento).' }); // generic error
+    }
+
+    const data = await response.json();
+    const resposta = data.choices?.[0]?.message?.content || 'Não consegui gerar uma resposta.';
+
+    res.json({ resposta });
+  } catch (err) {
+    console.error('DeepSeek fetch route execution error:', err);
+    res.status(500).json({ error: 'Erro interno ao processar sua mensagem.' });
   }
 });
 

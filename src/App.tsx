@@ -22,6 +22,7 @@ import { Assinaturas } from './components/tabs/Assinaturas';
 import { Dividas } from './components/tabs/Dividas';
 import { Configuracoes } from './components/tabs/Configuracoes';
 import { Admin } from './components/tabs/Admin';
+import { AssistenteIA } from './components/tabs/AssistenteIA';
 import { Auth } from './components/Auth';
 
 export default function App() {
@@ -78,6 +79,7 @@ export default function App() {
       case 'assinaturas': return <Assinaturas />;
       case 'dividas': return <Dividas />;
       case 'configuracoes': return <Configuracoes />;
+      case 'assistente-ia': return <AssistenteIA />;
       case 'admin': return isAdmin ? <Admin /> : <Dashboard />;
       default: return <Dashboard />;
     }

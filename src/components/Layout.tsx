@@ -21,6 +21,7 @@ import {
   Eye,
   EyeOff,
   Terminal,
+  Sparkles,
 } from 'lucide-react';
 import { useTheme } from '../contexts/ThemeContext';
 import { usePrivacy } from '../contexts/PrivacyContext';
@@ -51,6 +52,7 @@ export const Layout: React.FC<LayoutProps> = ({ children, activeTab, setActiveTa
     { id: 'simulador', label: 'Simulador de Juros', icon: Calculator },
     { id: 'assinaturas', label: 'Controle de Assinaturas', icon: Repeat },
     { id: 'dividas', label: 'Controle de Dívidas', icon: CreditCard },
+    { id: 'assistente-ia', label: 'Assistente IA', icon: Sparkles },
     { id: 'configuracoes', label: 'Configurações', icon: Settings },
   ];
 
@@ -106,17 +108,17 @@ export const Layout: React.FC<LayoutProps> = ({ children, activeTab, setActiveTa
                   key={item.id}
                   onClick={() => setActiveTab(item.id)}
                   className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${isActive
-                      ? isAdminItem
-                        ? 'bg-violet-50 text-violet-600 dark:bg-violet-500/10 dark:text-violet-400'
-                        : 'bg-emerald-50 text-emerald-600 dark:bg-emerald-500/10 dark:text-emerald-400'
-                      : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800/50 dark:hover:text-slate-200'
+                    ? isAdminItem
+                      ? 'bg-violet-50 text-violet-600 dark:bg-violet-500/10 dark:text-violet-400'
+                      : 'bg-emerald-50 text-emerald-600 dark:bg-emerald-500/10 dark:text-emerald-400'
+                    : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800/50 dark:hover:text-slate-200'
                     }`}
                 >
                   <Icon className={`w-5 h-5 ${isActive
-                      ? isAdminItem
-                        ? 'text-violet-600 dark:text-violet-400'
-                        : 'text-emerald-600 dark:text-emerald-400'
-                      : 'text-slate-400 dark:text-slate-500'
+                    ? isAdminItem
+                      ? 'text-violet-600 dark:text-violet-400'
+                      : 'text-emerald-600 dark:text-emerald-400'
+                    : 'text-slate-400 dark:text-slate-500'
                     }`} />
                   {item.label}
                 </button>
