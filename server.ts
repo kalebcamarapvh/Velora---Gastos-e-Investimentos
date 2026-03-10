@@ -779,13 +779,13 @@ app.get('/api/dividendos', requireAuth, async (req: any, res) => {
     return res.json([]);
   }
 
-  const anoMes = new Date().toISOString().slice(0, 7); // e.g. '2026-03'
+  const cacheKey = new Date().toISOString().slice(0, 10); // e.g. '2026-03-09' (Daily cache)
   const today = new Date();
   const results: any[] = [];
 
   for (const ticker of carteiraAtivos) {
-    // Check cache
-    const cached = db.prepare('SELECT payload FROM dividend_cache WHERE ticker = ? AND ano_mes = ?').get(ticker, anoMes) as any;
+    // Check cache (using ano_mes column literally as cache_key)
+    const cached = db.prepare('SELECT payload FROM dividend_cache WHERE ticker = ? AND ano_mes = ?').get(ticker, cacheKey) as any;
     let cashDividends: any[];
 
     if (cached) {
@@ -805,7 +805,7 @@ app.get('/api/dividendos', requireAuth, async (req: any, res) => {
         // Store in cache
         db.prepare(
           'INSERT INTO dividend_cache (ticker, ano_mes, payload) VALUES (?,?,?) ON CONFLICT(ticker,ano_mes) DO UPDATE SET payload=excluded.payload, updated_at=datetime(\'now\')'
-        ).run(ticker, anoMes, JSON.stringify(cashDividends));
+        ).run(ticker, cacheKey, JSON.stringify(cashDividends));
       } catch (err) {
         console.error(`brapi fetch error for ${ticker}:`, err);
         cashDividends = [];
@@ -827,7 +827,20 @@ app.get('/api/dividendos', requireAuth, async (req: any, res) => {
         if (payDate < twoYearsAgo) continue;
       }
 
-      const isFuture = payDate ? payDate > today : false;
+      let isFuture = false;
+      if (payDate) {
+        isFuture = payDate > today;
+      } else if (d.lastDatePrior) {
+        // Brapi often sends null paymentDate for recently announced dividends.
+        // If ex-date is within the last 60 days, we assume it's still 'a_receber'.
+        const exDate = new Date(d.lastDatePrior);
+        const sixtyDaysAgo = new Date();
+        sixtyDaysAgo.setDate(sixtyDaysAgo.getDate() - 60);
+        if (exDate >= sixtyDaysAgo) {
+          isFuture = true;
+        }
+      }
+
       const valorPorCota = d.rate ?? 0;
       const valorTotal = valorPorCota * quantidade;
       const irAliquota = 0.15; // 15% IR on JCP
@@ -1253,7 +1266,8 @@ app.get('/api/dashboard', requireAuth, async (req: any, res) => {
     const today = new Date();
     const posicoes = db.prepare(`SELECT ativo, quantidade FROM carteira WHERE quantidade > 0 AND usuario_id = ?`).all(req.usuarioId) as any[];
     for (const pos of posicoes) {
-      const cache = db.prepare(`SELECT payload FROM dividend_cache WHERE ticker = ?`).get(pos.ativo) as any;
+      // Pull latest cache for each ticker
+      const cache = db.prepare(`SELECT payload FROM dividend_cache WHERE ticker = ? ORDER BY id DESC LIMIT 1`).get(pos.ativo) as any;
       if (cache && cache.payload) {
         const proventos = JSON.parse(cache.payload);
         for (const p of proventos) {
