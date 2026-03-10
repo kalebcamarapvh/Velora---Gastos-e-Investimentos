@@ -363,11 +363,9 @@ export const Dashboard = () => {
                   paddingAngle={5}
                   dataKey="value"
                 >
-                  {distribuicaoGastos.map((entry, index) => {
-                    const monoColors = ['#e2e2e2', '#aaaaaa', '#777777', '#444444', '#222222'];
-                    const fill = dark ? monoColors[index % monoColors.length] : entry.color;
-                    return <Cell key={`cell-${index}`} fill={fill} />;
-                  })}
+                  {distribuicaoGastos.map((entry, index) => (
+                    <Cell key={`cell-${index}`} fill={entry.color} />
+                  ))}
                 </Pie>
                 <Tooltip content={(props) => <PiePrivacyTooltip {...props} formatCurrency={formatCurrency} />} />
                 <Legend verticalAlign="bottom" height={36} iconType="circle" />

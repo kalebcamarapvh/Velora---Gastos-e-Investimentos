@@ -1262,8 +1262,14 @@ app.get('/api/dashboard', requireAuth, async (req: any, res) => {
   // Dividends: using Brapi cache as approximation of total historical dividends
   // Dividends: approximating from brapi cache + current positions to match the "Proventos" tab
   let dividendosRecebidos = 0;
+  let dividendosMes = 0;
+  let dividendosDozeMeses = 0;
   try {
     const today = new Date();
+    const dozeMesesAtras = new Date();
+    dozeMesesAtras.setFullYear(today.getFullYear() - 1);
+    const paramMes = params[0].replace('%', ''); // e.g. '2026-03'
+
     const posicoes = db.prepare(`SELECT ativo, quantidade FROM carteira WHERE quantidade > 0 AND usuario_id = ?`).all(req.usuarioId) as any[];
     for (const pos of posicoes) {
       // Pull latest cache for each ticker
@@ -1273,14 +1279,21 @@ app.get('/api/dashboard', requireAuth, async (req: any, res) => {
         for (const p of proventos) {
           if (p.paymentDate) {
             const dp = new Date(p.paymentDate);
-            // Ignore anything older than 2 years
-            const twoYearsAgo = new Date();
-            twoYearsAgo.setFullYear(twoYearsAgo.getFullYear() - 2);
-            if (dp < twoYearsAgo) continue;
+            // Ignore anything older than 5 years for general math
+            const fiveYearsAgo = new Date();
+            fiveYearsAgo.setFullYear(fiveYearsAgo.getFullYear() - 5);
+            if (dp < fiveYearsAgo) continue;
             // Only sum PAID dividends
             if (dp <= today) {
               const valorLiquido = p.rate * pos.quantidade * (['JCP', 'JSCP'].includes(p.label) ? 0.85 : 1);
               dividendosRecebidos += valorLiquido;
+
+              if (p.paymentDate.startsWith(paramMes)) {
+                dividendosMes += valorLiquido;
+              }
+              if (dp >= dozeMesesAtras) {
+                dividendosDozeMeses += valorLiquido;
+              }
             }
           }
         }
@@ -1320,7 +1333,7 @@ app.get('/api/dashboard', requireAuth, async (req: any, res) => {
 
   // Recharts needs 'name', 'value' for PieChart
   const distribuicaoGastos = gastosPorCategoriaRaw.map((g, i) => {
-    const colors = ['#1e3a8a', '#3b82f6', '#60a5fa', '#93c5fd', '#bfdbfe', '#e0f2fe'];
+    const colors = ['#10b981', '#34d399', '#059669', '#6ee7b7', '#065f46', '#a7f3d0'];
     return { name: g.categoria, value: g.valor, color: colors[i % colors.length] || '#ccc' };
   });
 
@@ -1400,14 +1413,14 @@ app.get('/api/dashboard', requireAuth, async (req: any, res) => {
       receitaMensal,
       gastosMensais,
       taxaPoupanca,
-      dividendosMes: 0, // Mock for now, will be updated by /api/dividendos
+      dividendosMes, // Dynamically mapped
       dividendosAno: 0,
       valorInvestido,
       rentabilidadeCarteira,
       lucroReal, // MTM Profit
       topGastos,
       topReceitas,
-      dividendYieldMedio: 0,
+      dividendYieldMedio: valorAtual > 0 ? Number(((dividendosDozeMeses / valorAtual) * 100).toFixed(2)) : 0,
       usdRate
     },
     patrimonio: {
@@ -1608,7 +1621,7 @@ app.get('*', (req, res) => {
 });
 
 // ===================== START =====================
-const PORT = process.env.PORT || 3001;
+const PORT = process.env.PORT || 3333;
 app.listen(PORT, () => {
   console.log(`✅ API server running at http://localhost:${PORT}`);
 });
