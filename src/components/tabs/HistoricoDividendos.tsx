@@ -3,6 +3,7 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts';
 import { CalendarClock, CheckCircle2, Calendar, RefreshCw, AlertCircle, Filter, ChevronLeft, ChevronRight } from 'lucide-react';
+import { TickerLogo } from '../shared/TickerLogo';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface DividendEntry {
@@ -271,7 +272,12 @@ export const HistoricoDividendos = () => {
                   <tr key={i}
                     className="hover:bg-slate-50/50 transition-colors text-slate-700"
                   >
-                    <td className="p-4 font-bold text-slate-900">{e.ticker}</td>
+                    <td className="p-4">
+                      <div className="flex items-center gap-2.5">
+                        <TickerLogo ticker={e.ticker} size={26} />
+                        <span className="font-bold text-slate-900">{e.ticker}</span>
+                      </div>
+                    </td>
                     <td className="p-4"><StatusBadge status={e.status} /></td>
                     <td className="p-4 font-medium text-slate-600">
                       {tipoLabel(e.tipo)}

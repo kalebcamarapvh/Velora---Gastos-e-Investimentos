@@ -683,10 +683,10 @@ app.post('/api/lancamentos-investimentos', requireAuth, (req: any, res) => {
       // precoMedio in native currency (weighted average)
       const novoPrecoMedio = (existing.quantidade * existing.precoMedio + qtd * prc) / novaQtd;
       const novoValorInvestido = novaQtd * novoPrecoMedio * (isUSD ? taxaCambio : 1);
-      const novoValorAtual = novaQtd * prc * (isUSD ? taxaCambio : 1);
+      const novoValorAtual = novaQtd * existing.precoAtual * (isUSD ? taxaCambio : 1);
       db.prepare(
-        'UPDATE carteira SET quantidade=?,precoMedio=?,precoAtual=?,valorInvestido=?,valorAtual=?,taxaCambio=? WHERE id=?'
-      ).run(novaQtd, novoPrecoMedio, prc, novoValorInvestido, novoValorAtual, taxaCambio, existing.id);
+        'UPDATE carteira SET quantidade=?,precoMedio=?,valorInvestido=?,valorAtual=?,taxaCambio=? WHERE id=?'
+      ).run(novaQtd, novoPrecoMedio, novoValorInvestido, novoValorAtual, taxaCambio, existing.id);
     }
   } else if (operacao === 'venda') {
     if (!existing) {
@@ -1237,24 +1237,57 @@ app.get('/api/dashboard', requireAuth, async (req: any, res) => {
   const gastosRef = db.prepare(`SELECT SUM(valor) as total FROM gastos ${whereClause}`).get(...params) as any;
   const gastosMensais = gastosRef?.total || 0;
 
-  // 3. Valor Investido & Rentabilidade (Balances are typically absolute, not period-dependent)
+  // 3. Valor Investido & Rentabilidade
   const invRef = db.prepare(`SELECT SUM(valorInvestido) as investido, SUM(valorAtual) as atual FROM carteira WHERE quantidade > 0 AND usuario_id = ?`).get(req.usuarioId) as any;
   const valorInvestido = invRef?.investido || 0;
   const valorAtual = invRef?.atual || 0;
 
-  // O Lucro Real/Rentabilidade da Carteira baseada no preço médio
-  const lucroReal = valorAtual - valorInvestido;
+  // Caixa Total (All time flow for investments)
+  const totalAportesAllTime = (db.prepare(`SELECT SUM(valorTotal) as total FROM lancamentos_investimentos WHERE operacao='compra' AND usuario_id = ?`).get(req.usuarioId) as any)?.total || 0;
+  const totalSaquesAllTime = (db.prepare(`SELECT SUM(valorTotal) as total FROM lancamentos_investimentos WHERE operacao='venda' AND usuario_id = ?`).get(req.usuarioId) as any)?.total || 0;
+
+  // Dividends: using Brapi cache as approximation of total historical dividends
+  // Dividends: approximating from brapi cache + current positions to match the "Proventos" tab
+  let dividendosRecebidos = 0;
+  try {
+    const today = new Date();
+    const posicoes = db.prepare(`SELECT ativo, quantidade FROM carteira WHERE quantidade > 0 AND usuario_id = ?`).all(req.usuarioId) as any[];
+    for (const pos of posicoes) {
+      const cache = db.prepare(`SELECT payload FROM dividend_cache WHERE ticker = ?`).get(pos.ativo) as any;
+      if (cache && cache.payload) {
+        const proventos = JSON.parse(cache.payload);
+        for (const p of proventos) {
+          if (p.paymentDate) {
+            const dp = new Date(p.paymentDate);
+            // Ignore anything older than 2 years
+            const twoYearsAgo = new Date();
+            twoYearsAgo.setFullYear(twoYearsAgo.getFullYear() - 2);
+            if (dp < twoYearsAgo) continue;
+            // Only sum PAID dividends
+            if (dp <= today) {
+              const valorLiquido = p.rate * pos.quantidade * (['JCP', 'JSCP'].includes(p.label) ? 0.85 : 1);
+              dividendosRecebidos += valorLiquido;
+            }
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.error('Error calculating dashboard dividends:', err);
+  }
+
+  // Fallback to "Receitas" -> Categoria='Dividendos' if cache isn't enough, but careful with double counting.
+  // Assuming the user wants true absolute profit:
+  const lucroReal = (valorAtual + totalSaquesAllTime) - totalAportesAllTime + dividendosRecebidos;
   const rentabilidadeCarteira = valorInvestido > 0 ? (lucroReal / valorInvestido) * 100 : 0;
 
   // 4. Dívidas Totais (Absolute)
   const divRef = db.prepare(`SELECT SUM(saldoRestante) as total FROM dividas WHERE usuario_id = ?`).get(req.usuarioId) as any;
   const dividasTotais = divRef?.total || 0;
 
-  // 5. Caixa Total (All time Receitas - Gastos - Compras Investimentos + Vendas Investimentos)
+  // 5. Caixa Total (Geral)
   const totalReceitasAllTime = (db.prepare(`SELECT SUM(valor) as total FROM receitas WHERE usuario_id = ?`).get(req.usuarioId) as any)?.total || 0;
   const totalGastosAllTime = (db.prepare(`SELECT SUM(valor) as total FROM gastos WHERE usuario_id = ?`).get(req.usuarioId) as any)?.total || 0;
-  const totalAportesAllTime = (db.prepare(`SELECT SUM(valorTotal) as total FROM lancamentos_investimentos WHERE operacao='compra' AND usuario_id = ?`).get(req.usuarioId) as any)?.total || 0;
-  const totalSaquesAllTime = (db.prepare(`SELECT SUM(valorTotal) as total FROM lancamentos_investimentos WHERE operacao='venda' AND usuario_id = ?`).get(req.usuarioId) as any)?.total || 0;
 
   const caixaTotal = totalReceitasAllTime - totalGastosAllTime - totalAportesAllTime + totalSaquesAllTime;
 

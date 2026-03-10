@@ -289,7 +289,7 @@ export const Dashboard = () => {
           trend={(dashboard.rentabilidadeCarteira >= 0) ? 'up' : 'down'}
           trendValue={`${dashboard.rentabilidadeCarteira > 0 ? '+' : ''}${Number(dashboard.rentabilidadeCarteira).toFixed(2)}%`}
           colorClass={(dashboard.rentabilidadeCarteira >= 0) ? "bg-emerald-50 text-emerald-600" : "bg-rose-50 text-rose-600"}
-          description="O Lucro/Prejuízo real baseado no preço médio de aquisição de cada ativo vs Preço atual."
+          description="Ganho de capital total contendo o Lucro Irrealizado das posições abertas + o Lucro/Prejuízo já realizado em vendas + Dividendos pagos."
         />
         <StatCard
           title="Dividendos no Período"

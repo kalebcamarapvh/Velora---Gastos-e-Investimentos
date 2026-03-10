@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Plus, TrendingUp, TrendingDown, DollarSign, Filter, AlertCircle, Trash2 } from 'lucide-react';
+import { TickerLogo } from '../shared/TickerLogo';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from 'recharts';
 import { Modal } from '../Modal';
 import { CurrencyInput } from '../CurrencyInput';
@@ -343,9 +344,14 @@ export const Investimentos = () => {
                   const isUSD = item.moeda === 'USD';
                   return (
                     <tr key={item.id} className="hover:bg-slate-50/50 transition-colors text-slate-700">
-                      <td className="p-4 font-bold text-slate-900">
-                        {item.ativo}
-                        {isUSD && <span className="ml-1.5 text-xs font-normal text-blue-500">USD</span>}
+                      <td className="p-4">
+                        <div className="flex items-center gap-2.5">
+                          <TickerLogo ticker={item.ativo} size={28} />
+                          <div>
+                            <span className="font-bold text-slate-900">{item.ativo}</span>
+                            {isUSD && <span className="ml-1.5 text-xs font-normal text-blue-500">USD</span>}
+                          </div>
+                        </div>
                       </td>
                       <td className="p-4"><TipoBadge tipo={item.tipo} /></td>
                       <td className="p-4 text-right">
@@ -452,7 +458,12 @@ export const Investimentos = () => {
                     </span>
                   </td>
                   <td className="p-4"><TipoBadge tipo={l.tipo} /></td>
-                  <td className="p-4 font-bold text-slate-900">{l.ativo}</td>
+                  <td className="p-4">
+                    <div className="flex items-center gap-2">
+                      <TickerLogo ticker={l.ativo} size={22} />
+                      <span className="font-bold text-slate-900">{l.ativo}</span>
+                    </div>
+                  </td>
                   <td className="p-4 text-right">{l.quantidade % 1 === 0 ? l.quantidade : l.quantidade.toFixed(6)}</td>
                   <td className="p-4 text-right privacy-blur">
                     {fmtNative(l.preco, l.moeda)}
